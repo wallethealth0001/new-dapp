@@ -1,0 +1,18 @@
+{
+  "network": "BNB Smart Chain Mainnet",
+  "chainId": 56,
+  "contractName": "AllowanceSpender",
+  "contractAddress": "0x698f4c854C8F6fD8fCC84af2E5d399D78E5792B2",
+  "transactionHash": "0x2ad281fcb6648df181b4fbabd2e53e5c706c7a74a9d3b4e9d456520f5a2cf613",
+  "blockNumber": 131888397,
+  "deployerAddress": "0xd2b9c08eeEA0Dbc2155aB6e0998Ab83600C8199d",
+  "constructorArguments": {
+    "token": "0x55d398326f99059fF775485246999027B3197955",
+    "receiver1": "0x6ccCc3B55C398F32eE65E9dFAB72d6146a774Dce",
+    "receiver2": "0x82147AA32AF1832e19bAcde9ce38C9fE3633b352"
+  },
+  "gasUsed": "594658",
+  "effectiveGasPriceWei": "51100000",
+  "deploymentCommand": "npm run deploy:mainnet --workspace hardhat",
+  "deployedAt": "2026-11-05T21:25:48.064Z"
+}

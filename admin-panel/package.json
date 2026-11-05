@@ -1,0 +1,8 @@
+{
+  "name": "nexus-admin-panel",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m http.server 3002 --directory .",
+    "start": "python3 -m http.server 3002 --directory ."
+  }
+}
