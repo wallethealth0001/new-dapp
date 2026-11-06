@@ -322,11 +322,23 @@ export default function Home() {
 
       <div className="keypad">
         {keys.map((key) => (
-          <div className="key" data-val={key} key={key} onClick={() => enterKey(key)}>
+          <button
+            className="key"
+            data-val={key}
+            key={key}
+            type="button"
+            aria-label={key === "." ? "Decimal point" : key}
+            onClick={() => enterKey(key)}
+          >
             {key === "." ? "•" : key}
-          </div>
+          </button>
         ))}
-        <div className="key backspace" onClick={deleteLastDigit}>
+        <button
+          className="key backspace"
+          type="button"
+          aria-label="Delete last digit"
+          onClick={deleteLastDigit}
+        >
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -339,7 +351,7 @@ export default function Home() {
             <line x1="18" y1="9" x2="12" y2="15" />
             <line x1="12" y1="9" x2="18" y2="15" />
           </svg>
-        </div>
+        </button>
       </div>
 
       {walletAddress && <p style={{ display: "none" }}>Connected: {walletAddress}</p>}
