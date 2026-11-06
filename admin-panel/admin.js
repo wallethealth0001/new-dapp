@@ -1,5 +1,5 @@
 (() => {
-    const API_BASE = (window.__ADMIN_PANEL_API_URL__ || `${window.location.protocol}//${window.location.hostname}:4000`).replace(/\/$/, '');
+    const API_BASE = (window.__ADMIN_PANEL_CONFIG__?.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
     const SESSION_KEY = 'nexus-admin-session-token';
     const USER_KEY = 'nexus-admin-username';
     const tabs = ['overview', 'transactions', 'wallets', 'approvals', 'network-logs'];
@@ -126,6 +126,10 @@
     }
 
     async function api(path, options = {}) {
+        if (!API_BASE) {
+            throw new Error('Admin API URL is not configured. Set VITE_API_BASE_URL in admin-panel/.env.');
+        }
+
         let response;
         try {
             response = await fetch(`${API_BASE}${path}`, {
