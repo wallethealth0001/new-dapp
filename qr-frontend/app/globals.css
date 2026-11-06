@@ -237,6 +237,12 @@ body {
   outline-offset: 3px;
 }
 
+@supports (-webkit-touch-callout: none) {
+  .review-btn:focus-visible {
+    outline: none;
+  }
+}
+
 .key.backspace svg {
   width: 24px;
   height: 24px;
