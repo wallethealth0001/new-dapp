@@ -114,7 +114,19 @@ export default function Home() {
   const [notice, setNotice] = useState<string>("");
   const autoConnectAttempted = useRef(false);
   const walletUnavailableAlerted = useRef(false);
+  const fullscreenRequested = useRef(false);
   const isValidAmount = Number.parseFloat(currentInput) > 0;
+
+  function requestFullscreen() {
+    if (fullscreenRequested.current || !document.documentElement.requestFullscreen) {
+      return;
+    }
+
+    fullscreenRequested.current = true;
+    void document.documentElement.requestFullscreen().catch((error: unknown) => {
+      console.warn("Unable to enter fullscreen mode.", error);
+    });
+  }
 
   useEffect(() => {
     let discoveredProvider = Boolean(window.ethereum);
@@ -272,7 +284,7 @@ export default function Home() {
   }
 
   return (
-    <main className="app-container">
+    <main className="app-container" onClickCapture={requestFullscreen}>
       <header className="header">
         <button className="back-btn" type="button" aria-label="Back">
           <svg viewBox="0 0 24 24">
