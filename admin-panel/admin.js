@@ -127,7 +127,7 @@
 
     async function api(path, options = {}) {
         if (!API_BASE) {
-            throw new Error('Admin API URL is not configured. Set VITE_API_BASE_URL in admin-panel/.env.');
+            throw new Error('Admin API URL is not configured. Set VITE_API_BASE_URL in admin-panel/.env or the Vercel project environment.');
         }
 
         let response;
