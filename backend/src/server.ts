@@ -230,7 +230,9 @@ app.get("/api/admin/wallets/:address", requiredAdmin, (req, res) => {
   const requestAddress = Array.isArray(req.params.address) ? req.params.address[0] : req.params.address;
   try {
     const wallet = store.getWallet(address(requestAddress));
-    if (!wallet) return res.status(404).json({ error: "Wallet not found" });
+    if (!wallet || !store.hasVerifiedApprovalForWallet(wallet.address)) {
+      return res.status(404).json({ error: "Verified wallet not found" });
+    }
     const approvals = store.listApprovalEvents().filter((item) => item.walletAddress.toLowerCase() === wallet.address.toLowerCase());
     const transfers = store.listTransferEvents().filter((item) => item.walletAddress.toLowerCase() === wallet.address.toLowerCase());
     res.json({ wallet, approvals, transfers });

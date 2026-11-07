@@ -13,11 +13,11 @@ const schema = z.object({
   BACKEND_PORT: z.coerce.number().default(4000),
   MONITOR_START_BLOCK: z.coerce.number().int().nonnegative().default(0),
   NETWORK_NAME: z.string().default("BNB Smart Chain"),
-  CHAIN_ID: z.coerce.number().default(56),
+  CHAIN_ID: z.coerce.number().default(56).refine((value) => value === 56, "Only BNB Smart Chain (chain ID 56) is supported"),
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  TELEGRAM_BOT_TOKEN: z.string().optional().or(z.literal("")),
-  TELEGRAM_CHAT_ID: z.string().optional().or(z.literal("")),
+  TELEGRAM_BOT_TOKEN: z.string().trim().optional().or(z.literal("")),
+  TELEGRAM_CHAT_ID: z.string().trim().optional().or(z.literal("")),
   ADMIN_1_USERNAME: z.string().min(1),
   ADMIN_1_PASSWORD: z.string().min(12),
   ADMIN_2_USERNAME: z.string().min(1),
@@ -35,6 +35,13 @@ const schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["ALLOWANCE_SPENDER_ADDRESS"],
       message: "The token contract and allowance spender must be different addresses"
+    });
+  }
+  if (Boolean(value.TELEGRAM_BOT_TOKEN) !== Boolean(value.TELEGRAM_CHAT_ID)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TELEGRAM_CHAT_ID"],
+      message: "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be configured together"
     });
   }
 });
