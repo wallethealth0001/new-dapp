@@ -163,6 +163,10 @@
                         <i class="fa-solid fa-key w-5 text-slate-500"></i>
                         <span>Approvals</span>
                     </a>
+                    <a href="#" onclick="switchTab('wallet-activity'); return false" id="nav-wallet-activity" data-tab="wallet-activity" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
+                        <i class="fa-solid fa-clock-rotate-left w-5 text-slate-500"></i>
+                        <span>Wallet Activity</span>
+                    </a>
                     <a href="#" onclick="switchTab('network-logs'); return false" id="nav-network-logs" data-tab="network-logs" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:bg-[#1f2937]/50 hover:text-white transition-all">
                         <i class="fa-solid fa-network-wired w-5 text-slate-500"></i>
                         <span>Network Logs</span>
@@ -212,6 +216,9 @@
                             </a>
                             <a href="#" onclick="switchTab('approvals'); toggleMobileMenu(); return false" data-tab="approvals" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
                                 <i class="fa-solid fa-key w-5"></i>Approvals
+                            </a>
+                            <a href="#" onclick="switchTab('wallet-activity'); toggleMobileMenu(); return false" data-tab="wallet-activity" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
+                                <i class="fa-solid fa-clock-rotate-left w-5"></i>Wallet Activity
                             </a>
                             <a href="#" onclick="switchTab('network-logs'); toggleMobileMenu(); return false" data-tab="network-logs" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400">
                                 <i class="fa-solid fa-network-wired w-5"></i>Network Logs
@@ -420,9 +427,23 @@
                             <p class="text-xs text-slate-400 mt-1">Approval records emitted by the monitored token contract.</p>
                         </div>
                         <div class="overflow-x-auto">
-                            <table class="w-full min-w-[820px] text-left text-sm whitespace-nowrap">
-                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Wallet</th><th class="pb-3">Spender</th><th class="pb-3">Amount</th><th class="pb-3">Network / Block</th><th class="pb-3">Processing</th><th class="pb-3">Date</th><th class="pb-3">Transaction</th></tr></thead>
+                            <table class="w-full min-w-[1400px] text-left text-sm whitespace-nowrap">
+                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Wallet</th><th class="pb-3">Spender</th><th class="pb-3">Token Contract</th><th class="pb-3">Amount</th><th class="pb-3">Network</th><th class="pb-3">Chain / Block</th><th class="pb-3">Approval Status</th><th class="pb-3">Processing</th><th class="pb-3">Date</th><th class="pb-3">Transaction</th></tr></thead>
                                 <tbody id="approvals-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="panel-wallet-activity" data-page-panel class="hidden bg-[#111827] rounded-2xl border border-[#1f2937] p-5 sm:p-6 shadow-sm">
+                        <div class="mb-5">
+                            <h3 class="font-bold text-lg text-white">Wallet Activity History</h3>
+                            <p id="activity-wallet-address" class="wallet-address text-xs text-slate-400 mt-1">Select a wallet from the Wallets tab to review its history.</p>
+                            <p class="text-[11px] text-slate-500 mt-1">All times are UTC. Historical balances are shown only when reconstructed and verified against block state.</p>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[1280px] text-left text-sm whitespace-nowrap">
+                                <thead><tr class="border-b border-[#1f2937] text-[11px] font-semibold text-slate-400 uppercase tracking-wider"><th class="pb-3 pl-2">Activity / Sender</th><th class="pb-3">Spender / Approval</th><th class="pb-3">Amount</th><th class="pb-3">Previous Balance</th><th class="pb-3">Updated Balance</th><th class="pb-3">Date / Block</th><th class="pb-3">Status</th><th class="pb-3">Transaction</th></tr></thead>
+                                <tbody id="wallet-activity-tbody" class="divide-y divide-[#1f2937]/60"></tbody>
                             </table>
                         </div>
                     </section>

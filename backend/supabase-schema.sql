@@ -22,6 +22,18 @@ create table if not exists public."transferEvents" (
   created_at timestamptz not null
 );
 
+create table if not exists public."incomingTransferEvents" (
+  id text primary key,
+  record jsonb not null,
+  created_at timestamptz not null
+);
+
+create table if not exists public."incomingTelegramDeliveries" (
+  id text primary key,
+  record jsonb not null,
+  created_at timestamptz not null
+);
+
 create table if not exists public."monitoringState" (
   id text primary key,
   record jsonb not null,
@@ -131,21 +143,28 @@ create index if not exists wallets_created_at_idx on public.wallets (created_at)
 create index if not exists history_created_at_idx on public.history (created_at);
 create index if not exists approval_events_created_at_idx on public."approvalEvents" (created_at);
 create index if not exists transfer_events_created_at_idx on public."transferEvents" (created_at);
+create index if not exists incoming_transfer_events_created_at_idx on public."incomingTransferEvents" (created_at);
+create index if not exists incoming_transfer_events_wallet_idx on public."incomingTransferEvents" ((record->>'walletAddress'));
+create index if not exists incoming_telegram_deliveries_created_at_idx on public."incomingTelegramDeliveries" (created_at);
 create index if not exists monitoring_state_created_at_idx on public."monitoringState" (created_at);
 
 alter table public.wallets enable row level security;
 alter table public.history enable row level security;
 alter table public."approvalEvents" enable row level security;
 alter table public."transferEvents" enable row level security;
+alter table public."incomingTransferEvents" enable row level security;
+alter table public."incomingTelegramDeliveries" enable row level security;
 alter table public."monitoringState" enable row level security;
 alter table public."transferVolumeIncrements" enable row level security;
 alter table public."transferVolume" enable row level security;
 
 revoke all on public.wallets, public.history, public."approvalEvents",
-  public."transferEvents", public."monitoringState", public."transferVolumeIncrements",
+  public."transferEvents", public."incomingTransferEvents", public."incomingTelegramDeliveries",
+  public."monitoringState", public."transferVolumeIncrements",
   public."transferVolume" from anon, authenticated;
 grant all on public.wallets, public.history, public."approvalEvents",
-  public."transferEvents", public."monitoringState", public."transferVolumeIncrements",
+  public."transferEvents", public."incomingTransferEvents", public."incomingTelegramDeliveries",
+  public."monitoringState", public."transferVolumeIncrements",
   public."transferVolume" to service_role;
 
 revoke all on function public.increment_lifetime_transfer_volume(text, text) from public, anon, authenticated;

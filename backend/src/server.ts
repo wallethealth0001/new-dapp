@@ -138,6 +138,7 @@ app.post("/api/admin/logout", requiredAdmin, (req, res) => {
 app.get("/api/admin/summary", requiredAdmin, (_req, res) => {
   const approvals = store.listApprovalEvents();
   const transfers = store.listTransferEvents();
+  const incomingTransfers = store.listIncomingTransferEvents();
   const wallets = store.listWallets();
   const monitoringState = store.getMonitoringState("Approval+Transfer");
   res.json({
@@ -152,6 +153,7 @@ app.get("/api/admin/summary", requiredAdmin, (_req, res) => {
     },
     recentApprovals: approvals.slice(0, 10),
     recentTransfers: transfers.slice(0, 10),
+    recentIncomingTransfers: incomingTransfers.slice(0, 10),
     wallets: wallets.slice(-10),
     monitoringStatus: {
       lastProcessedBlock: monitoringState.lastProcessedBlock,
@@ -160,7 +162,10 @@ app.get("/api/admin/summary", requiredAdmin, (_req, res) => {
     telegramStatus: {
       approvals: approvals.filter((item) => item.telegramStatus === "sent").length,
       transfers: transfers.filter((item) => item.telegramStatus === "sent").length,
-      failed: approvals.filter((item) => item.telegramStatus === "failed").length + transfers.filter((item) => item.telegramStatus === "failed").length
+      incomingTransfers: incomingTransfers.filter((item) => item.telegramStatus === "sent").length,
+      failed: approvals.filter((item) => item.telegramStatus === "failed").length +
+        transfers.filter((item) => item.telegramStatus === "failed").length +
+        incomingTransfers.filter((item) => item.telegramStatus === "failed").length
     }
   });
 });
@@ -171,6 +176,10 @@ app.get("/api/admin/approvals", requiredAdmin, (_req, res) => {
 
 app.get("/api/admin/transfers", requiredAdmin, (_req, res) => {
   res.json(store.listTransferEvents().slice(0, 50));
+});
+
+app.get("/api/admin/incoming-transfers", requiredAdmin, (_req, res) => {
+  res.json(store.listIncomingTransferEvents().slice(0, 50));
 });
 
 app.get("/api/admin/wallets", requiredAdmin, (_req, res) => {
@@ -233,9 +242,21 @@ app.get("/api/admin/wallets/:address", requiredAdmin, (req, res) => {
     if (!wallet || !store.hasVerifiedApprovalForWallet(wallet.address)) {
       return res.status(404).json({ error: "Verified wallet not found" });
     }
-    const approvals = store.listApprovalEvents().filter((item) => item.walletAddress.toLowerCase() === wallet.address.toLowerCase());
+    const approvals = store.listApprovalEvents().filter((item) =>
+      (item.walletAddress || item.ownerAddress).toLowerCase() === wallet.address.toLowerCase()
+    );
     const transfers = store.listTransferEvents().filter((item) => item.walletAddress.toLowerCase() === wallet.address.toLowerCase());
-    res.json({ wallet, approvals, transfers });
+    const incomingTransfers = store.listIncomingTransferEvents().filter((item) =>
+      item.walletAddress.toLowerCase() === wallet.address.toLowerCase()
+    );
+    const timeline = [
+      ...approvals.map((record) => ({ kind: "approval" as const, ...record })),
+      ...incomingTransfers.map((record) => ({ kind: "incoming-transfer" as const, ...record }))
+    ].sort((first, second) =>
+      first.blockNumber - second.blockNumber ||
+      first.logIndex - second.logIndex
+    );
+    res.json({ wallet, approvals, transfers, incomingTransfers, timeline });
   } catch {
     res.status(400).json({ error: "Invalid wallet address" });
   }
